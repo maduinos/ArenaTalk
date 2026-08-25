@@ -5,11 +5,11 @@ from datetime import datetime
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from debatesim.adapters.base import AgentBackend
-from debatesim.adapters.cli_agents import EnsembleBackend
-from debatesim.engines.debate import DebateCancelled, run_debate
-from debatesim.models import Character
-from debatesim.ranking import RankingStore
+from arenatalk.adapters.base import AgentBackend
+from arenatalk.adapters.cli_agents import EnsembleBackend
+from arenatalk.engines.debate import DebateCancelled, run_debate
+from arenatalk.models import Character
+from arenatalk.ranking import RankingStore
 
 
 class DebateWorker(QObject):
@@ -54,7 +54,7 @@ class DebateWorker(QObject):
         note = (text or "").strip()
         if not note:
             return False
-        from debatesim.attachments import expand_text_with_attachments
+        from arenatalk.attachments import expand_text_with_attachments
 
         expanded, status = expand_text_with_attachments(note)
         stamp = datetime.now().strftime("%H:%M:%S")

@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from debatesim.game.sprites import (
+from arenatalk.game.sprites import (
     FRAME_HEIGHT,
     FRAME_WIDTH,
     SpriteAnim,
@@ -808,7 +808,7 @@ class ArenaScene(QWidget):
             p.drawText(podium, Qt.AlignmentFlag.AlignCenter, str(i + 1))
 
     def _draw_header(self, p: QPainter) -> None:
-        from debatesim import __version__
+        from arenatalk import __version__
 
         bar = QRectF(14, 10, self.width() - 28, 46)
         p.setPen(Qt.PenStyle.NoPen)
@@ -817,8 +817,8 @@ class ArenaScene(QWidget):
 
         p.setPen(QColor("#f8fafc"))
         p.setFont(QFont("Sans", 14, QFont.Weight.Bold))
-        p.drawText(28, 38, "DebateSim")
-        title_advance = p.fontMetrics().horizontalAdvance("DebateSim")
+        p.drawText(28, 38, "ArenaTalk")
+        title_advance = p.fontMetrics().horizontalAdvance("ArenaTalk")
         p.setPen(QColor("#94a3b8"))
         p.setFont(QFont("Sans", 10, QFont.Weight.DemiBold))
         version_text = f"v{__version__}"

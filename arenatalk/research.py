@@ -9,10 +9,10 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-USER_AGENT = "DebateSim/0.0.1 (local debate research; +https://localhost)"
+USER_AGENT = "ArenaTalk/0.0.1 (local debate research; +https://localhost)"
 TIMEOUT = 8.0
 
-DEFAULT_LOG_DIR = Path.home() / ".local/share/debatesim/logs"
+DEFAULT_LOG_DIR = Path.home() / ".local/share/arenatalk/logs"
 
 
 @dataclass(frozen=True)
@@ -100,7 +100,7 @@ def research_topic(topic: str, *, max_hits: int = 10) -> str:
         emit("### 반대 측 승리용 근거", oppose)
         emit("### 공통·로컬 아카이브", other)
 
-    from debatesim.attachments import load_path_attachments
+    from arenatalk.attachments import load_path_attachments
 
     attached, _status = load_path_attachments(topic)
     if attached:
@@ -159,7 +159,7 @@ def _search_queries(topic: str) -> list[str]:
 
 def _local_roots() -> list[Path]:
     roots: list[Path] = [DEFAULT_LOG_DIR]
-    env = os.environ.get("DEBATESIM_LOCAL_DIRS", "")
+    env = os.environ.get("AREATALK_LOCAL_DIRS", "")
     for part in env.split(":"):
         part = part.strip()
         if part:

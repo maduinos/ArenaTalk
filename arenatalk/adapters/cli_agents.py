@@ -40,7 +40,7 @@ _AGENT_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
 # tracking behavior as the default profile. Claude Code exposes tier aliases
 # (opus / fable / best) that follow the latest of that tier; other CLIs mostly
 # only float via their own default / Auto routing.
-# Override any with env DEBATESIM_MODEL_<NAME> (e.g. DEBATESIM_MODEL_CLAUDE=fable).
+# Override any with env AREATALK_MODEL_<NAME> (e.g. AREATALK_MODEL_CLAUDE=fable).
 STRONG_MODELS: dict[str, str | None] = {
     "claude": "opus",
     "codex": None,
@@ -51,7 +51,7 @@ STRONG_MODELS: dict[str, str | None] = {
 
 def resolve_model(provider: str, profile: str = "default") -> str | None:
     """Return model id to pass to a CLI, or None to use the CLI's own default."""
-    env_key = f"DEBATESIM_MODEL_{provider.upper()}"
+    env_key = f"AREATALK_MODEL_{provider.upper()}"
     if os.environ.get(env_key):
         return os.environ[env_key].strip() or None
     profile = (profile or "default").strip().lower()
@@ -337,7 +337,7 @@ class EnsembleBackend:
                 "claude / codex / agent(cursor-agent) / gemini 중 하나 이상 설치·PATH 등록 후 다시 시도하세요."
             )
         self.model_profile = model_profile
-        self.work_root = work_root or Path(tempfile.mkdtemp(prefix="debatesim-"))
+        self.work_root = work_root or Path(tempfile.mkdtemp(prefix="arenatalk-"))
         self.work_root.mkdir(parents=True, exist_ok=True)
         self._backends: dict[str, BackendType] = {}
         self._models: dict[str, str | None] = {}

@@ -7,8 +7,8 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from debatesim.adapters.base import MockBackend
-from debatesim.adapters.cli_agents import (
+from arenatalk.adapters.base import MockBackend
+from arenatalk.adapters.cli_agents import (
     ClaudePrintBackend,
     CodexExecBackend,
     CursorAgentBackend,
@@ -16,19 +16,19 @@ from debatesim.adapters.cli_agents import (
     GeminiPrintBackend,
     discover_providers,
 )
-from debatesim.characters import load_characters
-from debatesim.engines.debate import run_debate
-from debatesim.logs import DebateLogStore
-from debatesim.ranking import RankingStore
+from arenatalk.characters import load_characters
+from arenatalk.engines.debate import run_debate
+from arenatalk.logs import DebateLogStore
+from arenatalk.ranking import RankingStore
 
 console = Console()
-DEFAULT_DB = Path.home() / ".local/share/debatesim/rankings.db"
+DEFAULT_DB = Path.home() / ".local/share/arenatalk/rankings.db"
 _CMDS = frozenset({"list", "ranks", "backends", "debate", "play"})
 
 
 def _launch_gui(characters: Path | None = None) -> int:
     try:
-        from debatesim.game.window import run_game
+        from arenatalk.game.window import run_game
     except ImportError:
         console.print(
             "[red]GUI 의존성 없음[/red]: pip install -e '.[gui]'  (PySide6 필요)"
@@ -44,21 +44,21 @@ def main(argv: list[str] | None = None) -> int:
     if not raw:
         return _launch_gui()
 
-    # GUI flags only (no subcommand): debatesim --characters /path
+    # GUI flags only (no subcommand): arenatalk --characters /path
     if raw[0] not in _CMDS and raw[0] not in {"-h", "--help"}:
         if raw[0].startswith("-"):
-            gparser = argparse.ArgumentParser(prog="debatesim")
+            gparser = argparse.ArgumentParser(prog="arenatalk")
             gparser.add_argument("--characters", type=Path, default=None)
             gargs = gparser.parse_args(raw)
             return _launch_gui(gargs.characters)
         console.print(f"[red]알 수 없는 명령:[/red] {raw[0]}")
-        console.print("GUI: debatesim   CLI: debatesim list|ranks|debate|backends|play")
+        console.print("GUI: arenatalk   CLI: arenatalk list|ranks|debate|backends|play")
         return 2
 
     parser = argparse.ArgumentParser(
-        prog="debatesim",
-        description="DebateSim — 인자 없이 실행하면 GUI. CLI는 하위 명령 사용.",
-        epilog="예: debatesim | ./play | debatesim debate '주제'",
+        prog="arenatalk",
+        description="ArenaTalk — 인자 없이 실행하면 GUI. CLI는 하위 명령 사용.",
+        epilog="예: arenatalk | ./play | arenatalk debate '주제'",
     )
     sub = parser.add_subparsers(dest="cmd", required=False)
 
@@ -142,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
             store.reset()
             console.print("[yellow]Elo 랭킹을 초기화했습니다.[/yellow]")
         rows = store.leaderboard()
-        table = Table(title="DebateSim Elo")
+        table = Table(title="ArenaTalk Elo")
         table.add_column("#", justify="right")
         table.add_column("character")
         table.add_column("elo", justify="right")

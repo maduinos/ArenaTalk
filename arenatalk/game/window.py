@@ -23,8 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from debatesim.adapters.base import MockBackend
-from debatesim.adapters.cli_agents import (
+from arenatalk.adapters.base import MockBackend
+from arenatalk.adapters.cli_agents import (
     ClaudePrintBackend,
     CodexExecBackend,
     CursorAgentBackend,
@@ -32,17 +32,17 @@ from debatesim.adapters.cli_agents import (
     GeminiPrintBackend,
     discover_providers,
 )
-from debatesim.characters import load_characters
-from debatesim.game.scene import PHASE_LABELS, ROLE_LABELS, ArenaScene
-from debatesim.game.sprites import load_sprite_character
-from debatesim.game.worker import start_debate_thread
-from debatesim.interest import interest_score, pick_top
-from debatesim.logs import DebateLogStore, match_result_from_dict, topic_title
-from debatesim.models import MatchResult, StanceBallot
-from debatesim.ranking import RankingStore, live_win_probs
-from debatesim.topic_frame import frame_topic
+from arenatalk.characters import load_characters
+from arenatalk.game.scene import PHASE_LABELS, ROLE_LABELS, ArenaScene
+from arenatalk.game.sprites import load_sprite_character
+from arenatalk.game.worker import start_debate_thread
+from arenatalk.interest import interest_score, pick_top
+from arenatalk.logs import DebateLogStore, match_result_from_dict, topic_title
+from arenatalk.models import MatchResult, StanceBallot
+from arenatalk.ranking import RankingStore, live_win_probs
+from arenatalk.topic_frame import frame_topic
 
-DEFAULT_DB = Path.home() / ".local/share/debatesim/rankings.db"
+DEFAULT_DB = Path.home() / ".local/share/arenatalk/rankings.db"
 
 STYLE = """
 QMainWindow, QWidget#Root {
@@ -180,7 +180,7 @@ QComboBox#SpeedBox, QComboBox#HistoryBox {
 class GameWindow(QMainWindow):
     def __init__(self, characters_root: Path | None = None) -> None:
         super().__init__()
-        self.setWindowTitle("DebateSim v0.0.1 — CharacterPet Arena")
+        self.setWindowTitle("ArenaTalk v0.0.1 — CharacterPet Arena")
         self.resize(1580, 920)
         self.setStyleSheet(STYLE)
 
@@ -437,7 +437,7 @@ class GameWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._logs.root)))
 
     def _build_backend(self):
-        from debatesim.adapters.cli_agents import resolve_model
+        from arenatalk.adapters.cli_agents import resolve_model
 
         key = self.backend_box.currentData()
         profile = str(self.model_box.currentData() or "default")
@@ -469,7 +469,7 @@ class GameWindow(QMainWindow):
         if not topic:
             return
         if len(self._roster) < 2:
-            QMessageBox.warning(self, "DebateSim", "페르소나가 있는 캐릭이 2명 이상 필요합니다.")
+            QMessageBox.warning(self, "ArenaTalk", "페르소나가 있는 캐릭이 2명 이상 필요합니다.")
             return
 
         self._busy = True
@@ -646,7 +646,7 @@ class GameWindow(QMainWindow):
         if not worker.inject(note):
             return
         self.topic_input.clear()
-        from debatesim.attachments import extract_local_paths, load_path_attachments
+        from arenatalk.attachments import extract_local_paths, load_path_attachments
 
         _attached, status = load_path_attachments(note)
         attach_html = ""
@@ -764,7 +764,7 @@ class GameWindow(QMainWindow):
         lines.append(f"승자: {winner}")
         conclusion = getattr(result, "conclusion", "") or ""
         if not conclusion and result.transcript:
-            from debatesim.conclusion import build_conclusion
+            from arenatalk.conclusion import build_conclusion
 
             conclusion = build_conclusion(
                 result.topic,
@@ -872,7 +872,7 @@ class GameWindow(QMainWindow):
         self.scene.set_status(f"오류: {message}")
         self.progress_label.setText(f"오류 — {message[:80]}")
         self._append_log(f"<span style='color:#f87171'>오류</span> {message}")
-        QMessageBox.critical(self, "DebateSim", message)
+        QMessageBox.critical(self, "ArenaTalk", message)
         self._cleanup_thread()
         self._stop_replay()
         self._set_idle()
@@ -969,7 +969,7 @@ class GameWindow(QMainWindow):
 
     def _reset_elo(self) -> None:
         if self._busy:
-            QMessageBox.information(self, "DebateSim", "토론/다시보기 중에는 리셋할 수 없습니다.")
+            QMessageBox.information(self, "ArenaTalk", "토론/다시보기 중에는 리셋할 수 없습니다.")
             return
         reply = QMessageBox.question(
             self,
@@ -983,7 +983,7 @@ class GameWindow(QMainWindow):
         try:
             self._store.reset()
         except OSError as exc:
-            QMessageBox.critical(self, "DebateSim", f"리셋 실패: {exc}")
+            QMessageBox.critical(self, "ArenaTalk", f"리셋 실패: {exc}")
             return
         self._refresh_ranks()
         self._append_log("<span style='color:#fbbf24'>Elo 랭킹을 초기화했습니다.</span>")
@@ -1006,20 +1006,20 @@ class GameWindow(QMainWindow):
 
     def _replay_selected(self) -> None:
         if self._busy:
-            QMessageBox.information(self, "DebateSim", "진행 중인 토론/다시보기가 끝낸 뒤 시도하세요.")
+            QMessageBox.information(self, "ArenaTalk", "진행 중인 토론/다시보기가 끝낸 뒤 시도하세요.")
             return
         name = self.history_box.currentData()
         if not name:
-            QMessageBox.information(self, "DebateSim", "다시볼 토론이 없습니다.")
+            QMessageBox.information(self, "ArenaTalk", "다시볼 토론이 없습니다.")
             return
         data = self._logs.load_json(str(name))
         if not data:
-            QMessageBox.warning(self, "DebateSim", "로그 파일을 읽을 수 없습니다.")
+            QMessageBox.warning(self, "ArenaTalk", "로그 파일을 읽을 수 없습니다.")
             return
         try:
             result = match_result_from_dict(data)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "DebateSim", f"로그 파싱 실패: {exc}")
+            QMessageBox.warning(self, "ArenaTalk", f"로그 파싱 실패: {exc}")
             return
 
         self._busy = True
@@ -1069,7 +1069,7 @@ class GameWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._stop_replay()
             self._set_idle()
-            QMessageBox.critical(self, "DebateSim", f"다시보기 시작 실패: {exc}")
+            QMessageBox.critical(self, "ArenaTalk", f"다시보기 시작 실패: {exc}")
 
     def _wait_replay_arrival(self, result: MatchResult) -> None:
         if not self._replaying:
@@ -1117,7 +1117,7 @@ class GameWindow(QMainWindow):
                 lines.append(f"승자: {winner}")
                 conclusion = getattr(result, "conclusion", "") or ""
                 if not conclusion and result.transcript:
-                    from debatesim.conclusion import build_conclusion
+                    from arenatalk.conclusion import build_conclusion
 
                     conclusion = build_conclusion(
                         result.topic,
@@ -1184,7 +1184,7 @@ class GameWindow(QMainWindow):
             self._stop_replay()
             self._set_idle()
             self.progress_label.setText(f"다시보기 오류 — {exc}")
-            QMessageBox.critical(self, "DebateSim", f"다시보기 오류: {exc}")
+            QMessageBox.critical(self, "ArenaTalk", f"다시보기 오류: {exc}")
 
     def _cleanup_thread(self) -> None:
         thread = self._thread
@@ -1232,12 +1232,12 @@ def run_game(characters_root: Path | None = None) -> int:
     from PySide6.QtWidgets import QApplication
     import sys
 
-    from debatesim.resources import window_icon_path
+    from arenatalk.resources import window_icon_path
 
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setApplicationName("DebateSim")
+    app.setApplicationName("ArenaTalk")
     app.setOrganizationName("maduinos")
-    app.setDesktopFileName("debatesim")
+    app.setDesktopFileName("arenatalk")
     icon_file = window_icon_path()
     if icon_file is not None:
         icon = QIcon(str(icon_file))

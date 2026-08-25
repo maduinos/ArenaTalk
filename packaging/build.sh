@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a windowed DebateSim binary with app icon (PyInstaller).
+# Build a windowed ArenaTalk binary with app icon (PyInstaller).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -9,7 +9,7 @@ if ! python3 -c "import PyInstaller" 2>/dev/null; then
   exit 1
 fi
 
-python3 -m PyInstaller --noconfirm --clean packaging/debatesim.spec
+python3 -m PyInstaller --noconfirm --clean packaging/arenatalk.spec
 echo
-echo "Built: $ROOT/dist/debatesim/debatesim"
+echo "Built: $ROOT/dist/arenatalk/arenatalk"
 echo "Desktop install (optional): bash packaging/install-desktop.sh"

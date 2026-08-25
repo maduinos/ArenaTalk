@@ -5,9 +5,9 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from debatesim.models import MatchResult, StanceBallot
+from arenatalk.models import MatchResult, StanceBallot
 
-DEFAULT_LOG_DIR = Path.home() / ".local/share/debatesim/logs"
+DEFAULT_LOG_DIR = Path.home() / ".local/share/arenatalk/logs"
 
 
 def topic_title(topic: str, limit: int = 48) -> str:
@@ -94,7 +94,7 @@ class DebateLogStore:
         )
 
         lines: list[str] = []
-        lines.append(f"# DebateSim 토론 로그")
+        lines.append(f"# ArenaTalk 토론 로그")
         lines.append("")
         lines.append(f"- 시각: {payload['saved_at']}")
         lines.append(f"- 주제: {result.topic}")

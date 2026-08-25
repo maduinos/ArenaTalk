@@ -1,7 +1,7 @@
 [project]
-name = "debatesim"
+name = "arenatalk"
 version = "0.0.1"
-description = "CharacterPet debate arena simulator with Elo ranking"
+description = "ArenaTalk — CharacterPet debate arena with Elo ranking"
 requires-python = ">=3.10"
 dependencies = [
   "rich>=13.0",
@@ -13,16 +13,16 @@ tui = ["textual>=0.80"]
 packaging = ["pyinstaller>=6.0"]
 
 [project.scripts]
-# 기본 진입점 = GUI. CLI는 debatesim list|ranks|debate|backends
-debatesim = "debatesim.__main__:main"
-debatesim-play = "debatesim.game.window:run_game_entry"
+# 기본 진입점 = GUI. CLI는 arenatalk list|ranks|debate|backends
+arenatalk = "arenatalk.__main__:main"
+arenatalk-play = "arenatalk.game.window:run_game_entry"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["debatesim*"]
+include = ["arenatalk*"]
 
 [tool.setuptools.package-data]
-debatesim = ["assets/icons/*"]
+arenatalk = ["assets/icons/*"]

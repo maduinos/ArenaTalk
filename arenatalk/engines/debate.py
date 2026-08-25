@@ -4,14 +4,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
-from debatesim.adapters.base import AgentBackend, build_system_prompt, parse_ballot
-from debatesim.adapters.cli_agents import EnsembleBackend
-from debatesim.conclusion import build_conclusion
-from debatesim.interest import interest_score, pick_top
-from debatesim.models import Character, MatchResult, StanceBallot
-from debatesim.ranking import RankingStore, aggregate_ballots, decide_winner
-from debatesim.research import research_topic
-from debatesim.topic_frame import frame_topic
+from arenatalk.adapters.base import AgentBackend, build_system_prompt, parse_ballot
+from arenatalk.adapters.cli_agents import EnsembleBackend
+from arenatalk.conclusion import build_conclusion
+from arenatalk.interest import interest_score, pick_top
+from arenatalk.models import Character, MatchResult, StanceBallot
+from arenatalk.ranking import RankingStore, aggregate_ballots, decide_winner
+from arenatalk.research import research_topic
+from arenatalk.topic_frame import frame_topic
 
 ROLE_CYCLE = ("advocate", "critic", "evidence")
 
@@ -99,7 +99,7 @@ def run_debate(
         log("웹·로컬에서 근거를 수집하는 중…")
         research_brief = research_topic(topic)
         log("자료 팩 준비 완료" if "1." in research_brief else "자료 제한적 — 페르소나·구체안으로 진행")
-        from debatesim.attachments import extract_local_paths, load_path_attachments
+        from arenatalk.attachments import extract_local_paths, load_path_attachments
 
         # Ensure topic paths are attached even if research returned early empty-ish.
         if "사용자 지정 로컬 파일" not in research_brief:
@@ -114,7 +114,7 @@ def run_debate(
             for path in extract_local_paths(topic):
                 log(f"로컬 첨부 후보: {path}")
     if materials.strip():
-        from debatesim.attachments import expand_text_with_attachments
+        from arenatalk.attachments import expand_text_with_attachments
 
         expanded, status = expand_text_with_attachments(materials)
         research_brief = (

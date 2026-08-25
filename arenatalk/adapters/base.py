@@ -5,8 +5,8 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
-from debatesim.models import Character, StanceBallot
-from debatesim.research import normalize_recommendation, preferred_side
+from arenatalk.models import Character, StanceBallot
+from arenatalk.research import normalize_recommendation, preferred_side
 
 
 class AgentBackend(Protocol):

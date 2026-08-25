@@ -5,7 +5,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from debatesim.models import MatchResult, RankRow, StanceBallot
+from arenatalk.models import MatchResult, RankRow, StanceBallot
 
 DEFAULT_ELO = 1000.0
 K_FACTOR = 32.0
@@ -214,7 +214,7 @@ def decide_winner(ballots: list[StanceBallot], recommendation_dist: dict[str, fl
 def aggregate_ballots(ballots: list[StanceBallot]) -> tuple[dict[str, float], float, float]:
     if not ballots:
         return {}, 0.0, 0.0
-    from debatesim.research import normalize_recommendation
+    from arenatalk.research import normalize_recommendation
 
     weights: dict[str, float] = {}
     for b in ballots:

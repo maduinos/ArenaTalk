@@ -9,7 +9,7 @@ def icon_dir() -> Path:
     return Path(__file__).resolve().parent / "assets" / "icons"
 
 
-def icon_path(name: str = "debatesim.png") -> Path | None:
+def icon_path(name: str = "arenatalk.png") -> Path | None:
     path = icon_dir() / name
     return path if path.is_file() else None
 
@@ -17,7 +17,7 @@ def icon_path(name: str = "debatesim.png") -> Path | None:
 @lru_cache(maxsize=1)
 def window_icon_path() -> Path | None:
     """Best icon for QWindow / taskbar (prefer 256, then master PNG, then ICO)."""
-    for name in ("debatesim-256.png", "debatesim.png", "debatesim.ico"):
+    for name in ("arenatalk-256.png", "arenatalk.png", "arenatalk.ico"):
         found = icon_path(name)
         if found is not None:
             return found

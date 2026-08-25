@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from debatesim.models import StanceBallot
-from debatesim.topic_frame import frame_topic
+from arenatalk.models import StanceBallot
+from arenatalk.topic_frame import frame_topic
 
 _LIST_ITEM_RE = re.compile(
     r"(?:^|\n)\s*(?:[-*•]|\d+[.)]|[①②③④⑤⑥⑦⑧⑨⑩])\s*(.+?)(?=(?:\n\s*(?:[-*•]|\d+[.)]|[①②③④⑤⑥⑦⑧⑨⑩])|\n\n|$))",

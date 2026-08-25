@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# DebateSim GUI launcher
+# ArenaTalk GUI launcher
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
-if command -v debatesim >/dev/null 2>&1; then
-  exec debatesim "$@"
+if command -v arenatalk >/dev/null 2>&1; then
+  exec arenatalk "$@"
 fi
-exec python3 -m debatesim "$@"
+exec python3 -m arenatalk "$@"

@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-from debatesim.models import Character, Persona
+from arenatalk.models import Character, Persona
 
 _DEFAULT_ROOTS = (
     Path("/home/whjeong/00_Github/maduinos/CharacterPet/characters"),
@@ -13,7 +13,7 @@ _DEFAULT_ROOTS = (
 
 
 def character_roots() -> list[Path]:
-    env = os.environ.get("DEBATESIM_CHARACTERS")
+    env = os.environ.get("AREATALK_CHARACTERS")
     if env:
         return [Path(env).expanduser()]
     return [p for p in _DEFAULT_ROOTS if p.is_dir()]

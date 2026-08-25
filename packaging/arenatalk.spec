@@ -1,25 +1,25 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for DebateSim GUI.
+"""PyInstaller spec for ArenaTalk GUI.
 
 Build:
-  cd DebateSim
-  pyinstaller packaging/debatesim.spec
+  cd ArenaTalk
+  pyinstaller packaging/arenatalk.spec
 """
 
 from pathlib import Path
 
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
-ICON_PNG = PROJECT_ROOT / "debatesim" / "assets" / "icons" / "debatesim.png"
-ICON_ICO = PROJECT_ROOT / "debatesim" / "assets" / "icons" / "debatesim.ico"
+ICON_PNG = PROJECT_ROOT / "arenatalk" / "assets" / "icons" / "arenatalk.png"
+ICON_ICO = PROJECT_ROOT / "arenatalk" / "assets" / "icons" / "arenatalk.ico"
 
 analysis = Analysis(
-    [str(PROJECT_ROOT / "packaging" / "debatesim_entry.py")],
+    [str(PROJECT_ROOT / "packaging" / "arenatalk_entry.py")],
     pathex=[str(PROJECT_ROOT)],
     binaries=[],
     datas=[
         (
-            str(PROJECT_ROOT / "debatesim" / "assets"),
-            "debatesim/assets",
+            str(PROJECT_ROOT / "arenatalk" / "assets"),
+            "arenatalk/assets",
         ),
     ],
     hiddenimports=[
@@ -41,7 +41,7 @@ executable = EXE(
     analysis.scripts,
     [],
     exclude_binaries=True,
-    name="debatesim",
+    name="arenatalk",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -62,5 +62,5 @@ bundle = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="debatesim",
+    name="arenatalk",
 )

@@ -4,7 +4,7 @@ import random
 import re
 from collections.abc import Iterable
 
-from debatesim.models import Character
+from arenatalk.models import Character
 
 _TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]{2,}")
 
