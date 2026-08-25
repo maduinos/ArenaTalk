@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=DebateSim
+GenericName=Debate Arena Simulator
+Comment=CharacterPet multi-agent debate arena with Elo ranking
+Exec=debatesim
+TryExec=debatesim
+Icon=debatesim
+Terminal=false
+Categories=Game;Education;Utility;
+Keywords=debate;AI;CharacterPet;Elo;simulation;
+StartupNotify=true
+StartupWMClass=debatesim
