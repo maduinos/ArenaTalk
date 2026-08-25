@@ -14,8 +14,11 @@ from arenatalk.adapters.cli_agents import (
     CursorAgentBackend,
     EnsembleBackend,
     GeminiPrintBackend,
+    OllamaRunBackend,
+    QwenPrintBackend,
     discover_providers,
 )
+from arenatalk.adapters.agent_setup import ensure_agent_clis, preferred_providers
 from arenatalk.characters import load_characters
 from arenatalk.engines.debate import run_debate
 from arenatalk.logs import DebateLogStore
@@ -23,7 +26,53 @@ from arenatalk.ranking import RankingStore
 
 console = Console()
 DEFAULT_DB = Path.home() / ".local/share/arenatalk/rankings.db"
-_CMDS = frozenset({"list", "ranks", "backends", "debate", "play"})
+_CMDS = frozenset({"list", "ranks", "backends", "debate", "play", "setup", "install"})
+
+
+def _cmd_install(*, with_agents: bool = True, with_desktop: bool = True) -> int:
+    """Reinstall ArenaTalk package, optional desktop entry, then agent CLI setup."""
+    import subprocess
+
+    root = Path(__file__).resolve().parent.parent
+    console.print("[bold]1/3[/bold] pip install -e '.[gui]'")
+    pip = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-e", ".[gui]"],
+        cwd=str(root),
+        check=False,
+    )
+    if pip.returncode != 0:
+        console.print("[red]pip install 실패[/red]")
+        return pip.returncode
+
+    if with_desktop:
+        desktop = root / "packaging" / "install-desktop.sh"
+        console.print("[bold]2/3[/bold] desktop launcher")
+        if desktop.is_file():
+            subprocess.run(["bash", str(desktop)], check=False)
+        else:
+            console.print("[yellow]install-desktop.sh 없음 — 건너뜀[/yellow]")
+    else:
+        console.print("[dim]2/3 desktop — skipped[/dim]")
+
+    if with_agents:
+        console.print(
+            "[bold]3/3[/bold] 에이전트: 유료 검사 → 없으면 무료 Top3 자동 설치"
+        )
+        result = ensure_agent_clis(auto_install=True)
+        for line in result.messages:
+            console.print(f"[dim]{line}[/dim]")
+        if result.installed:
+            console.print(f"[green]설치됨:[/green] {', '.join(result.installed)}")
+        if result.providers:
+            tier = "유료" if result.tier == "paid" else "무료"
+            console.print(f"[green]{tier} 에이전트 {len(result.providers)}개 준비[/green]")
+            return 0
+        console.print("[yellow]에이전트 CLI 없음 — mock 으로 실행 가능[/yellow]")
+        return 0
+
+    console.print("[dim]3/3 agents — skipped[/dim]")
+    console.print("[green]ArenaTalk 설치 완료[/green]")
+    return 0
 
 
 def _launch_gui(characters: Path | None = None) -> int:
@@ -73,7 +122,32 @@ def main(argv: list[str] | None = None) -> int:
         help="Elo · 승패 · 매치 기록을 모두 초기화",
     )
 
-    sub.add_parser("backends", help="연결된 정액제 CLI 목록")
+    sub.add_parser("backends", help="연결된 에이전트 CLI 목록 (유료 우선)")
+
+    p_setup = sub.add_parser(
+        "setup",
+        help="유료 CLI 검사 → 없으면 무료 Top3(gemini/qwen/ollama) 자동 설치",
+    )
+    p_setup.add_argument(
+        "--no-install",
+        action="store_true",
+        help="설치 없이 감지만",
+    )
+
+    p_install = sub.add_parser(
+        "install",
+        help="ArenaTalk 로컬 재설치 + 에이전트 자동 설정 (유료 검사 → 없으면 무료 설치)",
+    )
+    p_install.add_argument(
+        "--no-agents",
+        action="store_true",
+        help="에이전트 CLI 자동 설치 건너뛰기",
+    )
+    p_install.add_argument(
+        "--no-desktop",
+        action="store_true",
+        help="데스크톱 아이콘/런처 설치 건너뛰기",
+    )
 
     p_debate = sub.add_parser("debate", help="주제 토론 실행")
     p_debate.add_argument("topic", help="논의 주제")
@@ -81,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     p_debate.add_argument("--db", type=Path, default=DEFAULT_DB)
     p_debate.add_argument(
         "--backend",
-        choices=("all", "mock", "claude", "codex", "cursor", "gemini"),
+        choices=("all", "mock", "claude", "codex", "cursor", "gemini", "qwen", "ollama"),
         default="all",
         help="all=설치된 에이전트 자동 탐지·할당(기본)",
     )
@@ -101,11 +175,16 @@ def main(argv: list[str] | None = None) -> int:
         return _launch_gui(getattr(args, "characters", None))
 
     if args.cmd == "backends":
-        providers = discover_providers()
+        result = ensure_agent_clis(auto_install=False)
+        providers = result.providers or preferred_providers()
         if not providers:
-            console.print("[red]연결된 CLI 없음[/red] (claude / codex / agent / gemini)")
+            console.print("[red]연결된 CLI 없음[/red]")
+            console.print("[dim]arenatalk setup 으로 유료 검사 후 없으면 무료 CLI 자동 설치[/dim]")
             return 1
-        table = Table(title=f"Detected agent CLIs ({len(providers)})")
+        tier_label = {"paid": "유료", "free": "무료", "none": "없음"}.get(
+            result.tier, result.tier
+        )
+        table = Table(title=f"Agent CLIs · {tier_label} ({len(providers)})")
         table.add_column("#")
         table.add_column("name")
         table.add_column("display")
@@ -118,6 +197,33 @@ def main(argv: list[str] | None = None) -> int:
         console.print(table)
         console.print("[dim]debate --backend all 시 위 목록을 라운드로빈 자동 할당[/dim]")
         return 0
+
+    if args.cmd == "setup":
+        result = ensure_agent_clis(auto_install=not args.no_install)
+        for line in result.messages:
+            console.print(f"[dim]{line}[/dim]")
+        if result.installed:
+            console.print(
+                f"[green]설치됨:[/green] {', '.join(result.installed)}"
+            )
+        providers = result.providers
+        if providers:
+            tier = "유료" if result.tier == "paid" else "무료"
+            console.print(
+                f"[green]{tier} 에이전트 {len(providers)}개 준비[/green]"
+            )
+            for p in providers:
+                ver = f" · {p.version}" if p.version else ""
+                console.print(f"  • {p.display_name or p.name}{ver}")
+            return 0
+        console.print("[yellow]사용 가능한 CLI 없음 — mock 백엔드만 가능[/yellow]")
+        return 1
+
+    if args.cmd == "install":
+        return _cmd_install(
+            with_agents=not args.no_agents,
+            with_desktop=not args.no_desktop,
+        )
 
     if args.cmd == "list":
         chars = load_characters(args.characters)
@@ -172,13 +278,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.backend == "mock":
             backend: object = MockBackend()
         elif args.backend == "all":
-            backend = EnsembleBackend()
+            setup = ensure_agent_clis(auto_install=False)
+            backend = EnsembleBackend(
+                providers=setup.providers or None,
+            )
         elif args.backend == "claude":
             backend = ClaudePrintBackend()
         elif args.backend == "codex":
             backend = CodexExecBackend()
         elif args.backend == "gemini":
             backend = GeminiPrintBackend()
+        elif args.backend == "qwen":
+            backend = QwenPrintBackend()
+        elif args.backend == "ollama":
+            backend = OllamaRunBackend()
         else:
             backend = CursorAgentBackend()
         result = run_debate(

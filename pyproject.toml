@@ -13,7 +13,7 @@ tui = ["textual>=0.80"]
 packaging = ["pyinstaller>=6.0"]
 
 [project.scripts]
-# 기본 진입점 = GUI. CLI는 arenatalk list|ranks|debate|backends
+# 기본 진입점 = GUI. CLI: list|ranks|debate|backends|setup|install|play
 arenatalk = "arenatalk.__main__:main"
 arenatalk-play = "arenatalk.game.window:run_game_entry"
 

@@ -27,13 +27,25 @@ class ProviderInfo:
         return base
 
 
-# Known agent CLIs: (logical name, binary candidates, human label)
-_AGENT_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
-    ("claude", ("claude",), "Claude Code"),
-    ("codex", ("codex",), "OpenAI Codex"),
-    ("cursor", ("agent", "cursor-agent"), "Cursor Agent"),
-    ("gemini", ("gemini",), "Gemini CLI"),
+# Known agent CLIs: (logical name, binary candidates, human label, tier)
+# tier: paid = subscription CLI, free = no subscription required (may need API key)
+_AGENT_CATALOG: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
+    ("claude", ("claude",), "Claude Code", "paid"),
+    ("codex", ("codex",), "OpenAI Codex", "paid"),
+    ("cursor", ("agent", "cursor-agent"), "Cursor Agent", "paid"),
+    ("gemini", ("gemini",), "Gemini CLI", "free"),
+    ("qwen", ("qwen",), "Qwen Code", "free"),
+    ("ollama", ("ollama",), "Ollama", "free"),
 )
+
+PAID_PROVIDER_NAMES: frozenset[str] = frozenset(
+    name for name, _, _, tier in _AGENT_CATALOG if tier == "paid"
+)
+FREE_PROVIDER_NAMES: frozenset[str] = frozenset(
+    name for name, _, _, tier in _AGENT_CATALOG if tier == "free"
+)
+
+DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:7b"
 
 # Strong profile: rolling aliases only — never pin dated model IDs (they go stale).
 # None = omit --model / -m so the CLI auto-picks its current recommended, same
@@ -46,6 +58,8 @@ STRONG_MODELS: dict[str, str | None] = {
     "codex": None,
     "cursor": None,
     "gemini": None,
+    "qwen": None,
+    "ollama": None,
 }
 
 
@@ -215,17 +229,78 @@ class GeminiPrintBackend:
         return proc.stdout.strip()
 
 
-BackendType = ClaudePrintBackend | CodexExecBackend | CursorAgentBackend | GeminiPrintBackend
+class QwenPrintBackend:
+    name = "qwen"
+
+    def __init__(
+        self,
+        binary: str | None = None,
+        cwd: Path | None = None,
+        *,
+        model: str | None = None,
+    ) -> None:
+        self.binary = binary or shutil.which("qwen") or "qwen"
+        self.cwd = str(cwd) if cwd else None
+        self.model = model
+
+    def complete(self, system: str, user: str) -> str:
+        prompt = (
+            f"{system}\n\n---\n\n{user}\n\n"
+            "Do not use tools. Reply with JSON only."
+        )
+        cmd = [self.binary, "-p", prompt]
+        if self.model:
+            cmd.extend(["-m", self.model])
+        proc = _run(cmd, cwd=self.cwd)
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip() or f"qwen failed: {proc.returncode}")
+        return proc.stdout.strip()
 
 
-def _run(cmd: list[str], cwd: str | None = None) -> subprocess.CompletedProcess[str]:
+class OllamaRunBackend:
+    name = "ollama"
+
+    def __init__(
+        self,
+        binary: str | None = None,
+        cwd: Path | None = None,
+        *,
+        model: str | None = None,
+    ) -> None:
+        self.binary = binary or shutil.which("ollama") or "ollama"
+        self.cwd = str(cwd) if cwd else None
+        self.model = model or DEFAULT_OLLAMA_MODEL
+
+    def complete(self, system: str, user: str) -> str:
+        prompt = (
+            f"{system}\n\n---\n\n{user}\n\n"
+            "Do not run shell commands. Reply with JSON only."
+        )
+        cmd = [self.binary, "run", self.model, prompt]
+        proc = _run(cmd, cwd=self.cwd, timeout=900)
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip() or f"ollama failed: {proc.returncode}")
+        return proc.stdout.strip()
+
+
+BackendType = (
+    ClaudePrintBackend
+    | CodexExecBackend
+    | CursorAgentBackend
+    | GeminiPrintBackend
+    | QwenPrintBackend
+    | OllamaRunBackend
+)
+
+
+def _run(cmd: list[str], cwd: str | None = None, *, timeout: int = 600) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
         check=False,
         capture_output=True,
         text=True,
         cwd=cwd,
-        timeout=600,
+        timeout=timeout,
     )
 
 
@@ -258,12 +333,19 @@ def _resolve_binary(candidates: tuple[str, ...]) -> str | None:
     return None
 
 
-def discover_providers(*, probe_version: bool = True) -> list[ProviderInfo]:
+def discover_providers(
+    *,
+    probe_version: bool = True,
+    names: frozenset[str] | set[str] | None = None,
+) -> list[ProviderInfo]:
     """Scan PATH for installed agent CLIs and return a de-duplicated list."""
     found: list[ProviderInfo] = []
     seen_paths: set[str] = set()
+    allowed = set(names) if names is not None else None
 
-    for logical, candidates, display in _AGENT_CATALOG:
+    for logical, candidates, display, tier in _AGENT_CATALOG:
+        if allowed is not None and logical not in allowed:
+            continue
         binary = _resolve_binary(candidates)
         if not binary:
             continue
@@ -278,7 +360,7 @@ def discover_providers(*, probe_version: bool = True) -> list[ProviderInfo]:
                 binary=binary,
                 display_name=display,
                 version=version,
-                notes=f"via {which_name}",
+                notes=f"{tier} · via {which_name}",
             )
         )
     return found
@@ -311,6 +393,10 @@ def build_backend(
         return CursorAgentBackend(binary=binary, cwd=cwd, model=model)
     if name == "gemini":
         return GeminiPrintBackend(binary=binary, cwd=cwd, model=model)
+    if name == "qwen":
+        return QwenPrintBackend(binary=binary, cwd=cwd, model=model)
+    if name == "ollama":
+        return OllamaRunBackend(binary=binary, cwd=cwd, model=model)
     raise ValueError(f"unknown provider: {name}")
 
 
@@ -324,17 +410,23 @@ class EnsembleBackend:
         work_root: Path | None = None,
         auto_discover: bool = True,
         model_profile: str = "default",
+        prefer_paid: bool = True,
     ) -> None:
         if providers is not None:
             self.providers = list(providers)
         elif auto_discover:
-            self.providers = discover_providers()
+            if prefer_paid:
+                from arenatalk.adapters.agent_setup import preferred_providers
+
+                self.providers = preferred_providers()
+            else:
+                self.providers = discover_providers()
         else:
             self.providers = []
         if not self.providers:
             raise RuntimeError(
-                "정액제/로컬 에이전트 CLI를 찾지 못했습니다.\n"
-                "claude / codex / agent(cursor-agent) / gemini 중 하나 이상 설치·PATH 등록 후 다시 시도하세요."
+                "에이전트 CLI를 찾지 못했습니다.\n"
+                "arenatalk setup 으로 유료/무료 CLI 자동 설치 후 다시 시도하세요."
             )
         self.model_profile = model_profile
         self.work_root = work_root or Path(tempfile.mkdtemp(prefix="arenatalk-"))

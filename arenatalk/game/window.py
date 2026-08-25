@@ -30,8 +30,11 @@ from arenatalk.adapters.cli_agents import (
     CursorAgentBackend,
     EnsembleBackend,
     GeminiPrintBackend,
+    OllamaRunBackend,
+    QwenPrintBackend,
     discover_providers,
 )
+from arenatalk.adapters.agent_setup import ensure_agent_clis, preferred_providers
 from arenatalk.characters import load_characters
 from arenatalk.game.scene import PHASE_LABELS, ROLE_LABELS, ArenaScene
 from arenatalk.game.sprites import load_sprite_character
@@ -401,12 +404,18 @@ class GameWindow(QMainWindow):
 
     def _populate_backend_box(self) -> None:
         self.backend_box.clear()
-        providers = discover_providers()
+        setup = getattr(self, "_agent_setup", None)
+        if setup is None:
+            setup = ensure_agent_clis(auto_install=True)
+            self._agent_setup = setup
+        providers = setup.providers or preferred_providers()
         self._discovered = providers
         n = len(providers)
+        tier = setup.tier
         if n:
             names = ", ".join(p.display_name or p.name for p in providers)
-            self.backend_box.addItem(f"자동 할당 ({n}개 감지)", "all")
+            tier_label = "유료" if tier == "paid" else "무료"
+            self.backend_box.addItem(f"자동 할당 · {tier_label} ({n}개)", "all")
             self.backend_box.setItemData(0, names, Qt.ItemDataRole.ToolTipRole)
         else:
             self.backend_box.addItem("자동 할당 (감지된 CLI 없음)", "all")
@@ -416,18 +425,27 @@ class GameWindow(QMainWindow):
             self.backend_box.addItem(label, p.name)
 
     def _refresh_agents(self) -> None:
-        providers = getattr(self, "_discovered", None) or discover_providers()
+        setup = getattr(self, "_agent_setup", None)
+        providers = (
+            setup.providers
+            if setup and setup.providers
+            else preferred_providers()
+        )
         if not providers:
             self.agents_label.setText(
-                "감지된 에이전트 없음.\nclaude / codex / agent / gemini 를 PATH에 두세요."
+                "감지된 에이전트 없음.\n"
+                "터미널에서 arenatalk setup 실행"
             )
             return
+        tier = setup.tier if setup else ("paid" if any("paid" in (p.notes or "") for p in providers) else "free")
+        tier_label = "유료" if tier == "paid" else "무료"
         bits = []
         for p in providers:
             ver = f" · {p.version}" if p.version else ""
             bits.append(f"• {p.display_name or p.name}{ver}")
         self.agents_label.setText(
-            f"{len(providers)}개 자동 감지 → 출전 캐릭에 라운드로빈 할당\n" + "\n".join(bits)
+            f"{tier_label} {len(providers)}개 → 출전 캐릭에 라운드로빈 할당\n"
+            + "\n".join(bits)
         )
 
     def _open_log_dir(self) -> None:
@@ -456,6 +474,10 @@ class GameWindow(QMainWindow):
             return CodexExecBackend(model=model)
         if key == "gemini":
             return GeminiPrintBackend(model=model)
+        if key == "qwen":
+            return QwenPrintBackend(model=model)
+        if key == "ollama":
+            return OllamaRunBackend(model=model)
         return CursorAgentBackend(model=model)
 
     def _append_log(self, html: str) -> None:
