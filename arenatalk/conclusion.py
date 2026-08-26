@@ -69,6 +69,8 @@ def build_conclusion(
     winner_id: str | None,
     recommendation_dist: dict[str, float],
     display_names: dict[str, str] | None = None,
+    audience_dist: dict[str, float] | None = None,
+    audience_consensus_p: float = 0.0,
 ) -> str:
     """Compose a human-readable final consensus summary for the result panel."""
     display_names = display_names or {}
@@ -104,10 +106,17 @@ def build_conclusion(
 
     lines: list[str] = []
     if top_label:
-        lines.append(f"합의 표결: {top_label}")
+        lines.append(f"본선 합의: {top_label}")
     if winner_id:
         wname = display_names.get(winner_id, winner_id)
         lines.append(f"대표 결론 발언: {wname}")
+
+    if audience_dist:
+        aud_top = max(audience_dist.items(), key=lambda x: x[1])[0]
+        aud_p = audience_dist.get(aud_top, audience_consensus_p)
+        lines.append(f"대기실 여론: {aud_top} ({aud_p:.0%})")
+        if top_label and aud_top != top_label:
+            lines.append("※ 본선과 대기실 여론이 갈림")
 
     if frame.kind == "recommend" and items:
         lines.append(f"합의 목록 ({len(items)}):")
@@ -136,7 +145,6 @@ def build_conclusion(
 
     text = "\n".join(lines).strip()
     return text or (prose or "합의 결론을 추출하지 못했습니다.")
-
 
 def _first_sentences(text: str, *, max_chars: int = 220) -> str:
     raw = re.sub(r"\s+", " ", (text or "").strip())

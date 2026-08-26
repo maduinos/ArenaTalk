@@ -24,10 +24,9 @@ def topic_title(topic: str, limit: int = 48) -> str:
     return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + "…"
 
 
-def match_result_from_dict(data: dict) -> MatchResult:
-    """Rebuild MatchResult from a saved debate JSON (replay / review)."""
-    ballots = []
-    for raw in data.get("ballots") or []:
+def _parse_ballots(raw_list: object) -> list[StanceBallot]:
+    ballots: list[StanceBallot] = []
+    for raw in raw_list or []:
         if not isinstance(raw, dict):
             continue
         ballots.append(
@@ -39,6 +38,13 @@ def match_result_from_dict(data: dict) -> MatchResult:
                 notes=str(raw.get("notes") or ""),
             )
         )
+    return ballots
+
+
+def match_result_from_dict(data: dict) -> MatchResult:
+    """Rebuild MatchResult from a saved debate JSON (replay / review)."""
+    ballots = _parse_ballots(data.get("ballots"))
+    audience_ballots = _parse_ballots(data.get("audience_ballots"))
     transcript = []
     for row in data.get("transcript") or []:
         if isinstance(row, dict):
@@ -63,6 +69,11 @@ def match_result_from_dict(data: dict) -> MatchResult:
         providers={str(k): str(v) for k, v in (data.get("providers") or {}).items()},
         research_brief=str(data.get("research_brief") or ""),
         conclusion=str(data.get("conclusion") or ""),
+        audience_ballots=audience_ballots,
+        audience_dist={
+            str(k): float(v) for k, v in (data.get("audience_dist") or {}).items()
+        },
+        audience_consensus_p=float(data.get("audience_consensus_p") or 0.0),
     )
 
 
@@ -132,6 +143,25 @@ class DebateLogStore:
             if b.notes:
                 lines.append(f"  - notes: {b.notes}")
         lines.append("")
+        if result.audience_ballots or result.audience_dist:
+            lines.append("## 대기실 여론")
+            lines.append("")
+            for label, p in sorted(
+                (result.audience_dist or {}).items(), key=lambda x: -x[1]
+            ):
+                lines.append(f"- {label}: {p:.0%}")
+            if result.audience_consensus_p:
+                lines.append(f"- 여론 합의: {result.audience_consensus_p:.0%}")
+            lines.append("")
+            for b in result.audience_ballots:
+                name = display_names.get(b.character_id, b.character_id)
+                lines.append(
+                    f"- **{name}** · {b.recommendation} "
+                    f"({b.stance}, conf={b.confidence:.2f})"
+                )
+                if b.notes:
+                    lines.append(f"  - notes: {b.notes}")
+            lines.append("")
         lines.append("## 대화 기록")
         lines.append("")
         if not result.transcript:

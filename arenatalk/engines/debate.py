@@ -7,9 +7,19 @@ from typing import Callable
 from arenatalk.adapters.base import AgentBackend, build_system_prompt, parse_ballot
 from arenatalk.adapters.cli_agents import EnsembleBackend
 from arenatalk.conclusion import build_conclusion
-from arenatalk.interest import interest_score, pick_top
+from arenatalk.lounge import (
+    audience_weight,
+    build_lounge_system_prompt,
+    interest_with_profile,
+    pick_lounge_voters,
+)
 from arenatalk.models import Character, MatchResult, StanceBallot
-from arenatalk.ranking import RankingStore, aggregate_ballots, decide_winner
+from arenatalk.ranking import (
+    RankingStore,
+    aggregate_audience_ballots,
+    aggregate_ballots,
+    decide_winner,
+)
 from arenatalk.research import research_topic
 from arenatalk.topic_frame import frame_topic
 
@@ -41,6 +51,7 @@ def run_debate(
     materials: str = "",
     research: bool = True,
     apply_ranking: bool = True,
+    lounge_vote: bool = True,
     should_cancel: Callable[[], bool] | None = None,
     live_materials: Callable[[], str] | None = None,
     on_event: Callable[[str], None] | None = None,
@@ -75,10 +86,17 @@ def run_debate(
     frame = frame_topic(topic)
     log(f"주제 유형: {frame.kind}" + (f" · 요청 {frame.ask_count}개" if frame.ask_count else ""))
 
+    profiles = store.get_lounge_profiles([c.id for c in roster])
+
+    def score_fn(c: Character) -> float:
+        return interest_with_profile(topic, c, profiles.get(c.id))
+
+    from arenatalk.interest import pick_top
+
     picked = (
-        pick_top(topic, roster, k=cast_n, recent_ids=recent_ids)
+        pick_top(topic, roster, k=cast_n, recent_ids=recent_ids, score_fn=score_fn)
         if cast is None
-        else [(c, interest_score(topic, c)) for c in cast]
+        else [(c, score_fn(c)) for c in cast]
     )
     cast = [c for c, _ in picked]
     interest_scores = {c.id: score for c, score in picked}
@@ -140,8 +158,17 @@ def run_debate(
     def sys_for(character: Character, role: str) -> str:
         return build_system_prompt(character, role, topic_brief=frame.brief)
 
+    lounge_voters: list[Character] = []
+    if lounge_vote:
+        lounge_voters = pick_lounge_voters(
+            topic,
+            roster,
+            {c.id for c in cast},
+            profiles=profiles,
+        )
+
     n_cast = len(cast)
-    total_turns = n_cast * (1 + rounds + 1)
+    total_turns = n_cast * (1 + rounds + 1) + len(lounge_voters)
     turn_i = 0
 
     def bump(label: str) -> None:
@@ -272,6 +299,67 @@ def run_debate(
 
     dist, consensus_p, mean_conf = aggregate_ballots(ballots)
     winner = decide_winner(ballots, dist)
+
+    audience_ballots: list[StanceBallot] = []
+    audience_dist: dict[str, float] = {}
+    audience_consensus_p = 0.0
+    if lounge_voters:
+        check_cancel()
+        log(f"대기실 여론 투표 · {len(lounge_voters)}명")
+        if isinstance(backend, EnsembleBackend):
+            # Extend round-robin so lounge voters have providers too.
+            assignment = backend.assign(
+                [c.id for c in cast] + [c.id for c in lounge_voters]
+            )
+        cast_summary = _format_cast_ballots(ballots, cast)
+        lounge_jobs = []
+        for character in lounge_voters:
+            profile = profiles.get(character.id)
+            system = build_lounge_system_prompt(
+                character, topic_brief=frame.brief, profile=profile
+            )
+            user = (
+                f"{context_block()}"
+                f"사용자 주제:\n{topic}\n\n"
+                f"본선 토론 요약:\n{final_snap}\n\n"
+                f"본선 최종 투표:\n{cast_summary}\n\n"
+                "단계: 대기실 여론 투표\n"
+                "위 본선 결과를 참고하되, 네 성향대로 표를 던져라.\n"
+            )
+            lounge_jobs.append(
+                (character, "lounge_vote", system, user, "audience")
+            )
+        lounge_results = _run_jobs(
+            lounge_jobs,
+            backend,
+            parallel=bool(parallel),
+            log=log,
+            on_turn=turn,
+            on_thinking=thinking,
+            on_progress_bump=bump,
+            speech_hold=speech_hold,
+            speech_hold_scale=max(0.45, speech_hold_scale * 0.55),
+            should_cancel=should_cancel,
+        )
+        for character, role, speech, ballot in lounge_results:
+            transcript.append(
+                {
+                    "character_id": character.id,
+                    "role": role,
+                    "speech": speech,
+                    "recommendation": ballot.recommendation,
+                    "confidence": f"{ballot.confidence:.3f}",
+                }
+            )
+            audience_ballots.append(ballot)
+
+        def _w(b: StanceBallot) -> float:
+            return audience_weight(b, profiles.get(b.character_id))
+
+        audience_dist, audience_consensus_p, _ = aggregate_audience_ballots(
+            audience_ballots, weight_fn=_w
+        )
+
     conclusion = build_conclusion(
         topic,
         transcript,
@@ -279,6 +367,8 @@ def run_debate(
         winner_id=winner,
         recommendation_dist=dist,
         display_names={c.id: c.display_name for c in cast},
+        audience_dist=audience_dist,
+        audience_consensus_p=audience_consensus_p,
     )
     result = MatchResult(
         topic=topic,
@@ -290,13 +380,29 @@ def run_debate(
         mean_confidence=mean_conf,
         winner_id=winner,
         transcript=transcript,
-        providers=assignment,
+        providers={cid: assignment[cid] for cid in (c.id for c in cast) if cid in assignment},
         research_brief=research_brief,
         conclusion=conclusion,
+        audience_ballots=audience_ballots,
+        audience_dist=audience_dist,
+        audience_consensus_p=audience_consensus_p,
     )
     if apply_ranking:
         return store.apply_match(result)
     return result
+
+
+def _format_cast_ballots(ballots: list[StanceBallot], cast: list[Character]) -> str:
+    names = {c.id: c.display_name for c in cast}
+    if not ballots:
+        return "(없음)"
+    lines = []
+    for b in ballots:
+        name = names.get(b.character_id, b.character_id)
+        lines.append(
+            f"- {name}: {b.recommendation} ({b.confidence:.0%}) — {b.notes or ''}"
+        )
+    return "\n".join(lines)
 
 
 def _speech_hold_seconds(speech: str, scale: float = 1.0) -> float:

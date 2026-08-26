@@ -68,6 +68,10 @@ class MatchResult:
     providers: dict[str, str] = field(default_factory=dict)
     research_brief: str = ""
     conclusion: str = ""
+    # Waiting-room opinion (separate from cast Elo / winner)
+    audience_ballots: list[StanceBallot] = field(default_factory=list)
+    audience_dist: dict[str, float] = field(default_factory=dict)
+    audience_consensus_p: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

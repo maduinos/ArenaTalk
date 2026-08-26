@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from arenatalk.models import Character
 
@@ -70,12 +70,14 @@ def pick_top(
     k: int = 3,
     recent_ids: set[str] | None = None,
     priority_ids: Iterable[str] | None = None,
+    score_fn: Callable[[Character], float] | None = None,
 ) -> list[tuple[Character, float]]:
     """Pick cast by interest, with optional forced priority seats.
 
     ``priority_ids`` (click order) always fill seats first, ignoring interest.
     Remaining seats use interest ranking. If every candidate's topic interest is
     identical, fill remaining seats by random sample from that pool.
+    ``score_fn`` overrides per-character interest (e.g. lounge profile overlay).
     """
     recent_ids = recent_ids or set()
     roster = list(characters)
@@ -91,7 +93,10 @@ def pick_top(
         if len(forced) >= k:
             break
 
-    raw_scores = {c.id: interest_score(topic, c) for c in roster}
+    if score_fn is None:
+        raw_scores = {c.id: interest_score(topic, c) for c in roster}
+    else:
+        raw_scores = {c.id: float(score_fn(c)) for c in roster}
 
     def score_of(c: Character) -> float:
         score = raw_scores[c.id]

@@ -377,6 +377,15 @@ def main(argv: list[str] | None = None) -> int:
         console.print(f"  consensus_p: {result.consensus_p:.0%}")
         console.print(f"  mean_confidence: {result.mean_confidence:.0%}")
         console.print(f"  winner: {result.winner_id or 'draw'}")
+        if result.audience_dist:
+            console.rule("Lounge opinion")
+            for label, p in sorted(result.audience_dist.items(), key=lambda x: -x[1]):
+                console.print(f"  {label}: {p:.0%}")
+            console.print(f"  audience_consensus_p: {result.audience_consensus_p:.0%}")
+            for b in result.audience_ballots:
+                console.print(
+                    f"  · {b.character_id}: {b.recommendation} ({b.confidence:.0%})"
+                )
         console.print(f"  elo_delta: {result.rankings_delta}")
         names = {c.id: c.display_name for c in chars}
         log_path = DebateLogStore().save(result, display_names=names)

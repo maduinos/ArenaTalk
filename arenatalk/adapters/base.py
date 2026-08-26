@@ -44,6 +44,15 @@ class MockBackend:
         cite = "자료 팩의 유리한 근거를 앞세워 "
         if "경쟁 토론용 자료 팩" in user or "실시간 웹" in user:
             cite = "자료 팩을 인용해 "
+        if "대기실 청중" in system or "lounge_vote" in text or "여론 투표" in user:
+            payload = {
+                "speech": f"[{cid}] 대기실에서 {rec}에 한 표.",
+                "recommendation": rec,
+                "stance": stance,
+                "confidence": min(conf, 0.78),
+                "notes": "mock-lounge",
+            }
+            return json.dumps(payload, ensure_ascii=False)
         payload = {
             "speech": (
                 f"[{cid}] {cite}{rec}으로 밀어야 한다. "

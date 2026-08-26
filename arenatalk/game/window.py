@@ -31,8 +31,9 @@ from arenatalk.characters import active_character_root, load_characters
 from arenatalk.game.scene import PHASE_LABELS, ROLE_LABELS, ArenaScene
 from arenatalk.game.sprites import load_sprite_character
 from arenatalk.game.worker import start_debate_thread
-from arenatalk.interest import interest_score, pick_top
+from arenatalk.interest import pick_top
 from arenatalk.logs import DebateLogStore, match_result_from_dict, topic_title
+from arenatalk.lounge import interest_with_profile
 from arenatalk.models import MatchResult, StanceBallot
 from arenatalk.ranking import RankingStore, live_win_probs
 from arenatalk.topic_frame import frame_topic
@@ -218,6 +219,7 @@ class GameWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self.scene = ArenaScene(sprites)
         splitter.addWidget(self.scene)
+        self._apply_lounge_labels()
 
         side = QFrame()
         side.setObjectName("SidePanel")
@@ -473,6 +475,7 @@ class GameWindow(QMainWindow):
             if sp:
                 sprites.append(sp)
         self.scene.reload_sprites(sprites)
+        self._apply_lounge_labels()
         self.chars_root_label.setText(str(root))
         self.chars_root_label.setToolTip(str(root))
         self._refresh_ranks()
@@ -588,16 +591,24 @@ class GameWindow(QMainWindow):
             f"{topic_note}{frame_html}"
         )
 
-        scores = {c.id: interest_score(topic, c) for c in self._roster}
+        scores = {
+            c.id: interest_with_profile(
+                topic, c, self._store.get_lounge_profile(c.id)
+            )
+            for c in self._roster
+        }
         self.scene.set_interest(scores)
+        self._apply_lounge_labels()
         recent = set(self._recent_cast[-6:])
         priority = self.scene.volunteered_ids()
+        profiles = {c.id: self._store.get_lounge_profile(c.id) for c in self._roster}
         picked = pick_top(
             topic,
             self._roster,
             k=3,
             recent_ids=recent,
             priority_ids=priority,
+            score_fn=lambda c: interest_with_profile(topic, c, profiles.get(c.id)),
         )
         cast_chars = [c for c, _ in picked]
         cast_ids = [c.id for c in cast_chars]
@@ -781,7 +792,8 @@ class GameWindow(QMainWindow):
     ) -> None:
         self.scene.show_speech(character_id, speech)
         if recommendation:
-            self._live_ballots[character_id] = StanceBallot(
+            is_lounge = phase == "audience" or role == "lounge_vote"
+            ballot = StanceBallot(
                 character_id=character_id,
                 recommendation=recommendation,
                 stance="support"
@@ -789,13 +801,17 @@ class GameWindow(QMainWindow):
                 else ("oppose" if recommendation == "반대" else "abstain"),
                 confidence=float(confidence) if confidence else 0.55,
             )
-            cast = self._live_cast_ids or list(self._pending_cast)
-            if cast:
-                odds = live_win_probs(self._live_ballots, cast)
-                stances = {
-                    cid: b.recommendation for cid, b in self._live_ballots.items()
-                }
-                self.scene.set_win_odds(odds, stances=stances)
+            if is_lounge:
+                self.scene.set_lounge_votes({character_id: recommendation})
+            else:
+                self._live_ballots[character_id] = ballot
+                cast = self._live_cast_ids or list(self._pending_cast)
+                if cast:
+                    odds = live_win_probs(self._live_ballots, cast)
+                    stances = {
+                        cid: b.recommendation for cid, b in self._live_ballots.items()
+                    }
+                    self.scene.set_win_odds(odds, stances=stances)
         name = character_id
         actor = self.scene.actor(character_id)
         if actor:
@@ -829,8 +845,13 @@ class GameWindow(QMainWindow):
         self._last_result = result
         lines = []
         for label, p in sorted(result.recommendation_dist.items(), key=lambda x: -x[1]):
-            lines.append(f"{label}: {p:.0%}")
-        lines.append(f"합의 확률: {result.consensus_p:.0%}")
+            lines.append(f"본선 {label}: {p:.0%}")
+        lines.append(f"본선 합의: {result.consensus_p:.0%}")
+        aud = getattr(result, "audience_dist", None) or {}
+        if aud:
+            for label, p in sorted(aud.items(), key=lambda x: -x[1]):
+                lines.append(f"여론 {label}: {p:.0%}")
+            lines.append(f"여론 합의: {getattr(result, 'audience_consensus_p', 0):.0%}")
         winner = (
             self._names.get(result.winner_id, result.winner_id)
             if result.winner_id
@@ -891,6 +912,23 @@ class GameWindow(QMainWindow):
         self._append_log("<hr>")
         for line in lines:
             self._append_log(f"<span style='color:#86efac'>결과</span> {line}")
+        if getattr(result, "audience_ballots", None):
+            self._append_log(
+                "<div style='color:#93c5fd;font-weight:700;margin-top:8px'>"
+                "—— 대기실 여론 ——</div>"
+            )
+            for b in result.audience_ballots:
+                name = self._names.get(b.character_id, b.character_id)
+                self._append_log(
+                    f"<span style='color:#93c5fd'>여론</span> "
+                    f"<b>{name}</b> · {self._esc(b.recommendation)} "
+                    f"{b.confidence:.0%}"
+                    + (
+                        f" · {self._esc(b.notes)}"
+                        if b.notes and b.notes not in {"mock-win", "unparsed"}
+                        else ""
+                    )
+                )
         try:
             path = self._logs.save(result, display_names=self._names)
             self._append_log(
@@ -900,6 +938,8 @@ class GameWindow(QMainWindow):
         except OSError as exc:
             self._append_log(f"<span style='color:#f87171'>로그 저장 실패</span> {exc}")
         self._refresh_ranks()
+        self._apply_lounge_labels()
+        self.scene.reset_lounge_modes()
         self._cleanup_thread()
         # Remember cast so the next match rotates faces.
         for cid in result.participants:
@@ -1300,6 +1340,15 @@ class GameWindow(QMainWindow):
         self.rank_table.setColumnWidth(1, 64)
         self.rank_table.setColumnWidth(2, 78)
         self.rank_table.setColumnWidth(3, 58)
+
+    def _apply_lounge_labels(self) -> None:
+        if not self._roster:
+            return
+        labels = {}
+        for c in self._roster:
+            profile = self._store.get_lounge_profile(c.id)
+            labels[c.id] = profile.affinity_label()
+        self.scene.set_affinity_labels(labels)
 
 
 def run_game(characters_root: Path | None = None) -> int:

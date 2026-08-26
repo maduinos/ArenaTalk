@@ -35,6 +35,7 @@ from arenatalk.game.sprites import (
 PHASE_LABELS = {
     "opening": "초기 입장",
     "final": "최종 투표",
+    "audience": "대기실 여론",
     "round_1": "1라운드 반박",
     "round_2": "2라운드 수정",
     "round_3": "3라운드",
@@ -45,15 +46,18 @@ ROLE_LABELS = {
     "critic": "반박",
     "evidence": "근거",
     "final_vote": "투표",
+    "lounge_vote": "여론",
 }
 
 THINKING_HINTS = {
     "opening": "입장을 정리하는 중",
     "final": "최종 결론을 고르는 중",
+    "audience": "여론 표를 고르는 중",
     "advocate": "주장을 다듬는 중",
     "critic": "허점을 찾는 중",
     "evidence": "근거를 점검하는 중",
     "final_vote": "표를 던질 준비를 하는 중",
+    "lounge_vote": "대기실에서 표를 고르는 중",
 }
 
 
@@ -84,6 +88,7 @@ class Actor:
     provider: str = ""
     win_odds: float = 0.0
     stance_label: str = ""
+    affinity_label: str = ""  # lounge specialization chip
     bob: float = 0.0
     facing: int = 1  # 1 right, -1 left
     _anim: SpriteAnim | None = field(default=None, repr=False)
@@ -447,6 +452,11 @@ class ArenaScene(QWidget):
             a.interest = scores.get(a.character_id, 0.0)
         self.update()
 
+    def set_affinity_labels(self, labels: dict[str, str]) -> None:
+        for a in self._actors:
+            a.affinity_label = labels.get(a.character_id, "") or ""
+        self.update()
+
     def select_cast(self, cast_ids: list[str], providers: dict[str, str]) -> None:
         cast = set(cast_ids)
         for a in self._actors:
@@ -454,6 +464,7 @@ class ArenaScene(QWidget):
             a.provider = providers.get(a.character_id, "")
             if not a.selected:
                 a.win_odds = 0.0
+                # Keep affinity; clear only live vote chips for non-cast
                 a.stance_label = ""
         self.update()
 
@@ -471,7 +482,15 @@ class ArenaScene(QWidget):
                     a.stance_label = stances[a.character_id]
             else:
                 a.win_odds = 0.0
-                a.stance_label = ""
+        self.update()
+
+    def set_lounge_votes(self, stances: dict[str, str]) -> None:
+        """Show audience recommendations on waiting-room (non-cast) actors."""
+        for a in self._actors:
+            if a.selected:
+                continue
+            if a.character_id in stances:
+                a.stance_label = stances[a.character_id]
         self.update()
 
     def clear_win_odds(self) -> None:
@@ -525,6 +544,10 @@ class ArenaScene(QWidget):
                 a.mode = ActorMode.ARENA
                 a.anim_name = "waiting"
                 a.thinking_text = ""
+            elif a.mode == ActorMode.THINKING and not a.selected:
+                a.mode = ActorMode.HOME
+                a.anim_name = "idle"
+                a.thinking_text = ""
         hint = THINKING_HINTS.get(phase) or THINKING_HINTS.get(role) or "생각하는 중"
         role_l = ROLE_LABELS.get(role, role)
         actor.mode = ActorMode.THINKING
@@ -548,17 +571,38 @@ class ArenaScene(QWidget):
                 a.anim_name = "waiting"
                 a.thinking_text = ""
                 a.speech = ""
+            elif a.mode in {ActorMode.SPEAKING, ActorMode.THINKING} and not a.selected:
+                a.mode = ActorMode.HOME
+                a.anim_name = "idle"
+                a.thinking_text = ""
+                a.speech = ""
         actor.mode = ActorMode.SPEAKING
         actor.speech = speech
         actor.thinking_text = ""
         actor.anim_name = "waving"
-        # Fixed anchor in the upper arena (does not follow sprite bob / micro-moves).
-        ax = actor.target.x() if actor.selected else actor.position.x()
-        self._speech_anchor = QPointF(ax, self._arena.top() + 52)
+        if actor.selected:
+            ax = actor.target.x()
+            self._speech_anchor = QPointF(ax, self._arena.top() + 52)
+        else:
+            # Waiting-room reaction: bubble above lounge seat
+            self._speech_anchor = QPointF(
+                actor.position.x(), max(48.0, actor.position.y() - 120)
+            )
         self._speech_speaker_name = actor.display_name
         self._bubble.clear()
         self.update()
 
+    def reset_lounge_modes(self) -> None:
+        """Return non-cast actors to idle lounge after audience voting."""
+        for a in self._actors:
+            if a.selected or a.mode == ActorMode.WALKING:
+                continue
+            if a.mode in {ActorMode.SPEAKING, ActorMode.THINKING}:
+                a.mode = ActorMode.HOME
+                a.anim_name = "idle"
+                a.thinking_text = ""
+                a.speech = ""
+        self.update()
 
     def _place_bubble_for(self, actor: Actor) -> None:
         if not self._bubble.isVisible():
@@ -789,7 +833,7 @@ class ArenaScene(QWidget):
         p.drawText(
             int(lounge.x() + 16),
             int(lounge.y() + 38),
-            "호버=손흔들기  ·  클릭=우선 출전",
+            "호버=손흔들기  ·  클릭=우선 출전  ·  토론 후 여론 투표",
         )
 
     def _draw_arena(self, p: QPainter) -> None:
@@ -1152,14 +1196,34 @@ class ArenaScene(QWidget):
                 p.setPen(fg)
                 p.drawText(mplate, Qt.AlignmentFlag.AlignCenter, meta)
 
-        if actor.interest > 0.01 and not actor.selected and actor.mode == ActorMode.HOME:
-            p.setPen(QColor("#64748b"))
-            p.setFont(QFont("Sans", 8))
-            p.drawText(
-                int(actor.position.x() - 16),
-                int(actor.position.y() + 30),
-                f"{actor.interest:.0%}",
+        if (
+            (actor.interest > 0.01 or actor.affinity_label or actor.stance_label)
+            and not actor.selected
+            and actor.mode == ActorMode.HOME
+        ):
+            chip = actor.affinity_label or (
+                f"{actor.interest:.0%}" if actor.interest > 0.01 else "관전"
             )
+            if actor.stance_label:
+                chip = f"{actor.stance_label[:2]} · {chip}"
+            p.setFont(QFont("Sans", 7, QFont.Weight.Bold))
+            cfm = p.fontMetrics()
+            cw = min(cfm.horizontalAdvance(chip) + 10, 110)
+            ch = 14
+            cplate = QRectF(actor.position.x() - cw / 2, stack_y, cw, ch)
+            p.setPen(Qt.PenStyle.NoPen)
+            if actor.stance_label:
+                p.setBrush(QColor(30, 64, 175, 220))
+                fg = QColor("#bfdbfe")
+            elif actor.affinity_label:
+                p.setBrush(QColor(51, 65, 85, 220))
+                fg = QColor("#cbd5e1")
+            else:
+                p.setBrush(QColor(30, 41, 59, 180))
+                fg = QColor("#64748b")
+            p.drawRoundedRect(cplate, 4, 4)
+            p.setPen(fg)
+            p.drawText(cplate, Qt.AlignmentFlag.AlignCenter, chip)
 
         if actor.mode == ActorMode.WALKING:
             label = "자리로…" if _dist(actor.target, actor.home) < 2 else "토론장으로…"

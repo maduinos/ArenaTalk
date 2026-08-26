@@ -47,6 +47,11 @@ class RankingStore:
                       payload TEXT NOT NULL,
                       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                     );
+                    CREATE TABLE IF NOT EXISTS lounge_profiles (
+                      character_id TEXT PRIMARY KEY,
+                      payload TEXT NOT NULL,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
                     """
                 )
                 conn.commit()
@@ -66,6 +71,93 @@ class RankingStore:
                 conn.commit()
                 return RankRow(character_id, DEFAULT_ELO, 0, 0, 0, 0)
 
+    def get_lounge_profile(self, character_id: str):
+        from arenatalk.lounge import LoungeProfile
+
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT payload FROM lounge_profiles WHERE character_id = ?",
+                    (character_id,),
+                ).fetchone()
+                if not row:
+                    return LoungeProfile(character_id=character_id)
+                try:
+                    data = json.loads(row["payload"] or "{}")
+                except json.JSONDecodeError:
+                    data = {}
+                if not isinstance(data, dict):
+                    data = {}
+                return LoungeProfile.from_dict(character_id, data)
+
+    def get_lounge_profiles(self, character_ids: list[str] | None = None):
+        from arenatalk.lounge import LoungeProfile
+
+        with self._lock:
+            with self._connect() as conn:
+                if character_ids is None:
+                    rows = conn.execute(
+                        "SELECT character_id, payload FROM lounge_profiles"
+                    ).fetchall()
+                else:
+                    if not character_ids:
+                        return {}
+                    placeholders = ",".join("?" * len(character_ids))
+                    rows = conn.execute(
+                        f"SELECT character_id, payload FROM lounge_profiles "
+                        f"WHERE character_id IN ({placeholders})",
+                        list(character_ids),
+                    ).fetchall()
+                out: dict[str, LoungeProfile] = {}
+                for row in rows:
+                    cid = str(row["character_id"])
+                    try:
+                        data = json.loads(row["payload"] or "{}")
+                    except json.JSONDecodeError:
+                        data = {}
+                    if not isinstance(data, dict):
+                        data = {}
+                    out[cid] = LoungeProfile.from_dict(cid, data)
+                if character_ids is not None:
+                    for cid in character_ids:
+                        out.setdefault(cid, LoungeProfile(character_id=cid))
+                return out
+
+    def save_lounge_profile(self, profile) -> None:
+        payload = json.dumps(profile.to_dict(), ensure_ascii=False)
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO lounge_profiles(character_id, payload, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(character_id) DO UPDATE SET
+                      payload = excluded.payload,
+                      updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (profile.character_id, payload),
+                )
+                conn.commit()
+
+    def apply_lounge_learning(self, result: MatchResult) -> None:
+        """Update waiting-room overlays from audience ballots. Does not touch Elo."""
+        if not result.audience_ballots:
+            return
+        from arenatalk.lounge import update_profile_from_vote
+
+        cast_top = None
+        if result.recommendation_dist:
+            cast_top = max(result.recommendation_dist.items(), key=lambda x: x[1])[0]
+        for ballot in result.audience_ballots:
+            profile = self.get_lounge_profile(ballot.character_id)
+            update_profile_from_vote(
+                profile,
+                topic=result.topic,
+                ballot=ballot,
+                cast_top_label=cast_top,
+            )
+            self.save_lounge_profile(profile)
+
     def leaderboard(self, limit: int = 50) -> list[RankRow]:
         with self._lock:
             with self._connect() as conn:
@@ -75,13 +167,15 @@ class RankingStore:
                 ).fetchall()
                 return [_row_from_sql(r) for r in rows]
 
-    def reset(self, *, clear_match_log: bool = True) -> None:
-        """Wipe Elo / W-L-D (and optional match history rows)."""
+    def reset(self, *, clear_match_log: bool = True, clear_lounge: bool = False) -> None:
+        """Wipe Elo / W-L-D (and optional match history / lounge profiles)."""
         with self._lock:
             with self._connect() as conn:
                 conn.execute("DELETE FROM ranks")
                 if clear_match_log:
                     conn.execute("DELETE FROM matches")
+                if clear_lounge:
+                    conn.execute("DELETE FROM lounge_profiles")
                 conn.commit()
 
     def apply_match(self, result: MatchResult) -> MatchResult:
@@ -151,6 +245,8 @@ class RankingStore:
                     (result.topic, json.dumps(result.to_dict(), ensure_ascii=False)),
                 )
                 conn.commit()
+        # Audience specialization — never mixes into Elo deltas above.
+        self.apply_lounge_learning(result)
         return result
 
 
@@ -219,6 +315,31 @@ def aggregate_ballots(ballots: list[StanceBallot]) -> tuple[dict[str, float], fl
     total = sum(weights.values()) or 1.0
     dist = {k: v / total for k, v in weights.items()}
     mean_conf = sum(b.confidence for b in ballots) / len(ballots)
+    consensus = max(dist.values()) if dist else 0.0
+    return dist, consensus, mean_conf
+
+
+def aggregate_audience_ballots(
+    ballots: list[StanceBallot],
+    weight_fn=None,
+) -> tuple[dict[str, float], float, float]:
+    """Weighted lounge opinion distribution (separate from cast ballots)."""
+    if not ballots:
+        return {}, 0.0, 0.0
+    from arenatalk.research import normalize_recommendation
+
+    weights: dict[str, float] = {}
+    confs: list[float] = []
+    for b in ballots:
+        label = normalize_recommendation(b.recommendation)
+        b.recommendation = label
+        w = float(weight_fn(b)) if weight_fn else max(0.05, min(1.0, b.confidence))
+        w = max(0.05, w)
+        weights[label] = weights.get(label, 0.0) + w
+        confs.append(b.confidence)
+    total = sum(weights.values()) or 1.0
+    dist = {k: v / total for k, v in weights.items()}
+    mean_conf = sum(confs) / len(confs)
     consensus = max(dist.values()) if dist else 0.0
     return dist, consensus, mean_conf
 
