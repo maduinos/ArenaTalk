@@ -46,7 +46,8 @@ executable = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,
+    # True so CLI subcommands (list, debate, …) print to the terminal.
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

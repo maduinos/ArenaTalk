@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -23,19 +24,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from arenatalk.adapters.base import MockBackend
-from arenatalk.adapters.cli_agents import (
-    ClaudePrintBackend,
-    CodexExecBackend,
-    CursorAgentBackend,
-    EnsembleBackend,
-    GeminiPrintBackend,
-    OllamaRunBackend,
-    QwenPrintBackend,
-    discover_providers,
-)
 from arenatalk.adapters.agent_setup import ensure_agent_clis, preferred_providers
-from arenatalk.characters import load_characters
+from arenatalk.adapters.cli_agents import EnsembleBackend
+from arenatalk.adapters.factory import build_backend
+from arenatalk.characters import active_character_root, load_characters
 from arenatalk.game.scene import PHASE_LABELS, ROLE_LABELS, ArenaScene
 from arenatalk.game.sprites import load_sprite_character
 from arenatalk.game.worker import start_debate_thread
@@ -183,10 +175,11 @@ QComboBox#SpeedBox, QComboBox#HistoryBox {
 class GameWindow(QMainWindow):
     def __init__(self, characters_root: Path | None = None) -> None:
         super().__init__()
-        self.setWindowTitle("ArenaTalk v0.0.1 — CharacterPet Arena")
+        self.setWindowTitle("ArenaTalk v0.0.2 — CharacterPet Arena")
         self.resize(1580, 920)
         self.setStyleSheet(STYLE)
 
+        self._characters_override = characters_root
         self._roster = load_characters(characters_root)
         self._names = {c.id: c.display_name for c in self._roster}
         self._store = RankingStore(DEFAULT_DB)
@@ -255,6 +248,26 @@ class GameWindow(QMainWindow):
         self.agents_label.setWordWrap(True)
         self.agents_label.setMaximumHeight(72)
         side_layout.addWidget(self.agents_label)
+
+        chars_row = QHBoxLayout()
+        chars_title = QLabel("캐릭터 폴더")
+        chars_title.setObjectName("SideTitle")
+        chars_row.addWidget(chars_title)
+        chars_row.addStretch(1)
+        self.chars_folder_btn = QPushButton("폴더 선택")
+        self.chars_folder_btn.setObjectName("GhostBtn")
+        self.chars_folder_btn.setToolTip(
+            "CharacterPet 호환 캐릭터 폴더를 고릅니다\n"
+            "(characters/<id>/pet.json · AgentPet과 공유)"
+        )
+        self.chars_folder_btn.clicked.connect(self._pick_character_root)
+        chars_row.addWidget(self.chars_folder_btn)
+        side_layout.addLayout(chars_row)
+        self.chars_root_label = QLabel(str(active_character_root(characters_root)))
+        self.chars_root_label.setObjectName("SideHint")
+        self.chars_root_label.setWordWrap(True)
+        self.chars_root_label.setToolTip(self.chars_root_label.text())
+        side_layout.addWidget(self.chars_root_label)
 
         hist_row = QHBoxLayout()
         hist_title = QLabel("지난 토론")
@@ -406,7 +419,8 @@ class GameWindow(QMainWindow):
         self.backend_box.clear()
         setup = getattr(self, "_agent_setup", None)
         if setup is None:
-            setup = ensure_agent_clis(auto_install=True)
+            # Detect only — never auto-install from GUI startup.
+            setup = ensure_agent_clis(auto_install=False)
             self._agent_setup = setup
         providers = setup.providers or preferred_providers()
         self._discovered = providers
@@ -423,6 +437,60 @@ class GameWindow(QMainWindow):
         for p in providers:
             label = p.display_name or p.name
             self.backend_box.addItem(label, p.name)
+
+    def _pick_character_root(self) -> None:
+        if self._busy:
+            QMessageBox.information(
+                self, "ArenaTalk", "토론/다시보기 중에는 캐릭터 폴더를 바꿀 수 없습니다."
+            )
+            return
+        current = active_character_root(self._characters_override)
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "캐릭터 폴더 선택 (CharacterPet 호환)",
+            str(current if current.is_dir() else Path.home()),
+        )
+        if not chosen:
+            return
+        path = Path(chosen)
+        from arenatalk.characters import sync_character_library
+
+        try:
+            resolved = sync_character_library(path)
+        except (OSError, NotADirectoryError, RuntimeError, ImportError) as exc:
+            QMessageBox.critical(self, "ArenaTalk", f"폴더 저장 실패: {exc}")
+            return
+        self._characters_override = None
+        self._apply_character_library(resolved)
+
+    def _apply_character_library(self, root: Path) -> None:
+        """Reload roster + sprites from a CharacterPet-compatible folder."""
+        self._roster = load_characters(root)
+        self._names = {c.id: c.display_name for c in self._roster}
+        sprites = []
+        for c in self._roster:
+            sp = load_sprite_character(Path(c.root))
+            if sp:
+                sprites.append(sp)
+        self.scene.reload_sprites(sprites)
+        self.chars_root_label.setText(str(root))
+        self.chars_root_label.setToolTip(str(root))
+        self._refresh_ranks()
+        n = len(self._roster)
+        if n < 2:
+            QMessageBox.warning(
+                self,
+                "ArenaTalk",
+                f"폴더를 적용했습니다.\n{root}\n\n"
+                f"persona가 있는 캐릭터가 {n}명입니다. "
+                "CharacterPet 형식(characters/<id>/pet.json + persona)인지 확인하세요.",
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "ArenaTalk",
+                f"캐릭터 폴더 적용: {root}\n{n}명 로드 (AgentPet과 공유)",
+            )
 
     def _refresh_agents(self) -> None:
         setup = getattr(self, "_agent_setup", None)
@@ -455,30 +523,15 @@ class GameWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._logs.root)))
 
     def _build_backend(self):
-        from arenatalk.adapters.cli_agents import resolve_model
-
         key = self.backend_box.currentData()
         profile = str(self.model_box.currentData() or "default")
-        if key == "mock":
-            return MockBackend(think_seconds=1.6)
-        if key == "all":
-            discovered = getattr(self, "_discovered", None)
-            return EnsembleBackend(
-                providers=list(discovered) if discovered else None,
-                model_profile=profile,
-            )
-        model = resolve_model(str(key), profile)
-        if key == "claude":
-            return ClaudePrintBackend(model=model)
-        if key == "codex":
-            return CodexExecBackend(model=model)
-        if key == "gemini":
-            return GeminiPrintBackend(model=model)
-        if key == "qwen":
-            return QwenPrintBackend(model=model)
-        if key == "ollama":
-            return OllamaRunBackend(model=model)
-        return CursorAgentBackend(model=model)
+        discovered = getattr(self, "_discovered", None)
+        return build_backend(
+            str(key),
+            providers=list(discovered) if discovered else None,
+            model_profile=profile,
+            mock_think_seconds=1.6,
+        )
 
     def _append_log(self, html: str) -> None:
         self.transcript.append(html)

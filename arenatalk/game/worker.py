@@ -48,6 +48,9 @@ class DebateWorker(QObject):
 
     def request_cancel(self) -> None:
         self._cancel = True
+        from arenatalk.adapters.cli_agents import cancel_active_backends
+
+        cancel_active_backends()
 
     def inject(self, text: str) -> bool:
         """Queue spectator opinion / evidence for the next speaker prompts."""

@@ -108,13 +108,7 @@ character_id={character.id}
 
 def parse_ballot(character_id: str, raw: str) -> tuple[str, StanceBallot]:
     speech = raw.strip()
-    data = None
-    try:
-        m = re.search(r"\{[\s\S]*\}", raw)
-        if m:
-            data = json.loads(m.group(0))
-    except json.JSONDecodeError:
-        data = None
+    data = _extract_json_object(raw)
     if not isinstance(data, dict):
         return speech, StanceBallot(
             character_id=character_id,
@@ -141,3 +135,19 @@ def parse_ballot(character_id: str, raw: str) -> tuple[str, StanceBallot]:
         confidence=conf,
         notes=str(data.get("notes") or ""),
     )
+
+
+def _extract_json_object(raw: str) -> dict | None:
+    """Find the first JSON object in ``raw`` without a greedy brace regex."""
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(raw):
+        if char != "{":
+            continue
+        try:
+            obj, _end = decoder.raw_decode(raw, index)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+

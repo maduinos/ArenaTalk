@@ -1,6 +1,6 @@
-"""Frozen / PyInstaller entry for ArenaTalk GUI."""
+"""Frozen / PyInstaller entry for ArenaTalk (GUI + CLI)."""
 
-from arenatalk.game.window import run_game_entry
+from arenatalk.__main__ import main
 
 if __name__ == "__main__":
-    run_game_entry()
+    raise SystemExit(main())

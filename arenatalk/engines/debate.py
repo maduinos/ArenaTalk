@@ -365,9 +365,17 @@ def _run_jobs(
     ordered: list[tuple[Character, str, str, StanceBallot] | None] = [None] * len(jobs)
     with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
         futures = {pool.submit(one, job): idx for idx, job in enumerate(jobs)}
-        for fut in as_completed(futures):
-            idx = futures[fut]
-            ordered[idx] = fut.result()
+        try:
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                ordered[idx] = fut.result()
+        except DebateCancelled:
+            from arenatalk.adapters.cli_agents import cancel_active_backends
+
+            cancel_active_backends()
+            for fut in futures:
+                fut.cancel()
+            raise
     return [item for item in ordered if item is not None]
 
 

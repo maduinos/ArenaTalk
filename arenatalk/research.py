@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import urllib.error
 import urllib.parse
@@ -9,7 +8,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-USER_AGENT = "ArenaTalk/0.0.1 (local debate research; +https://localhost)"
+USER_AGENT = "ArenaTalk/0.0.2 (local debate research; +https://localhost)"
 TIMEOUT = 8.0
 
 DEFAULT_LOG_DIR = Path.home() / ".local/share/arenatalk/logs"
@@ -158,16 +157,18 @@ def _search_queries(topic: str) -> list[str]:
 
 
 def _local_roots() -> list[Path]:
+    from arenatalk.characters import character_roots
+    from arenatalk.config import env_get
+
     roots: list[Path] = [DEFAULT_LOG_DIR]
-    env = os.environ.get("AREATALK_LOCAL_DIRS", "")
+    env = env_get("ARENATALK_LOCAL_DIRS")
     for part in env.split(":"):
         part = part.strip()
         if part:
             roots.append(Path(part).expanduser())
-    # CharacterPet personas nearby (read-only context)
-    cp = Path("/home/whjeong/00_Github/maduinos/CharacterPet/characters")
-    if cp.is_dir():
-        roots.append(cp)
+    for root in character_roots():
+        if root.is_dir():
+            roots.append(root)
     return roots
 
 

@@ -225,5 +225,10 @@ def _download_https(url: str, destination: Path) -> None:
             if total > SCRIPT_MAX_BYTES:
                 raise ValueError("install script too large")
             chunks.append(block)
-    destination.write_bytes(b"".join(chunks))
+    data = b"".join(chunks)
+    # Refuse obvious non-shell payloads (HTML error pages, empty bodies).
+    head = data.lstrip()[:120]
+    if not head.startswith(b"#!") and b"ollama" not in head.lower():
+        raise ValueError("install script failed basic integrity check (missing shebang)")
+    destination.write_bytes(data)
     destination.chmod(0o700)

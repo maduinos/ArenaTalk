@@ -85,15 +85,21 @@ class RankingStore:
                 conn.commit()
 
     def apply_match(self, result: MatchResult) -> MatchResult:
-        """Update Elo from winner vs others. Draws if no clear winner."""
+        """Update Elo from winner vs others. Draws if no clear winner.
+
+        Multi-opponent matches compute every pairwise delta from the *starting*
+        Elo snapshot, then apply once — so a 3-way win does not inflate the
+        winner by feeding updated ratings into later pairings.
+        """
         participants = list(result.participants)
         winner = result.winner_id
         deltas: dict[str, float] = {cid: 0.0 for cid in participants}
 
         with self._lock:
             with self._connect() as conn:
-                for cid in participants:
-                    _ensure_conn(conn, cid)
+                starting: dict[str, RankRow] = {
+                    cid: _ensure_conn(conn, cid) for cid in participants
+                }
 
                 if winner is None or winner not in participants:
                     for cid in participants:
@@ -107,30 +113,18 @@ class RankingStore:
                         )
                 else:
                     others = [c for c in participants if c != winner]
-                    winner_row = _ensure_conn(conn, winner)
                     for opp in others:
-                        opp_row = _ensure_conn(conn, opp)
-                        exp_w = _expected(winner_row.elo, opp_row.elo)
-                        exp_o = _expected(opp_row.elo, winner_row.elo)
-                        d_w = K_FACTOR * (1.0 - exp_w)
-                        d_o = K_FACTOR * (0.0 - exp_o)
-                        deltas[winner] += d_w
-                        deltas[opp] += d_o
-                        winner_row = RankRow(
-                            winner_row.character_id,
-                            winner_row.elo + d_w,
-                            winner_row.wins,
-                            winner_row.losses,
-                            winner_row.draws,
-                            winner_row.matches,
-                        )
+                        exp_w = _expected(starting[winner].elo, starting[opp].elo)
+                        exp_o = _expected(starting[opp].elo, starting[winner].elo)
+                        deltas[winner] += K_FACTOR * (1.0 - exp_w)
+                        deltas[opp] += K_FACTOR * (0.0 - exp_o)
+
+                    for cid, delta in deltas.items():
+                        if abs(delta) < 1e-12:
+                            continue
                         conn.execute(
                             "UPDATE ranks SET elo = elo + ? WHERE character_id = ?",
-                            (d_w, winner),
-                        )
-                        conn.execute(
-                            "UPDATE ranks SET elo = elo + ? WHERE character_id = ?",
-                            (d_o, opp),
+                            (delta, cid),
                         )
 
                     conn.execute(

@@ -7,26 +7,18 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from arenatalk.adapters.base import MockBackend
-from arenatalk.adapters.cli_agents import (
-    ClaudePrintBackend,
-    CodexExecBackend,
-    CursorAgentBackend,
-    EnsembleBackend,
-    GeminiPrintBackend,
-    OllamaRunBackend,
-    QwenPrintBackend,
-    discover_providers,
-)
 from arenatalk.adapters.agent_setup import ensure_agent_clis, preferred_providers
-from arenatalk.characters import load_characters
+from arenatalk.adapters.factory import build_backend
+from arenatalk.characters import active_character_root, load_characters
 from arenatalk.engines.debate import run_debate
 from arenatalk.logs import DebateLogStore
 from arenatalk.ranking import RankingStore
 
 console = Console()
 DEFAULT_DB = Path.home() / ".local/share/arenatalk/rankings.db"
-_CMDS = frozenset({"list", "ranks", "backends", "debate", "play", "setup", "install"})
+_CMDS = frozenset(
+    {"list", "ranks", "backends", "debate", "play", "setup", "install", "characters"}
+)
 
 
 def _cmd_install(*, with_agents: bool = True, with_desktop: bool = True) -> int:
@@ -75,6 +67,51 @@ def _cmd_install(*, with_agents: bool = True, with_desktop: bool = True) -> int:
     return 0
 
 
+def _cmd_characters(args: argparse.Namespace) -> int:
+    if args.characters_command == "root":
+        from arenatalk.characters import sync_character_library
+
+        if args.set is not None:
+            try:
+                path = sync_character_library(Path(args.set))
+            except (OSError, NotADirectoryError, RuntimeError, ImportError) as exc:
+                console.print(f"[red]캐릭터 폴더 설정 실패:[/red] {exc}")
+                return 1
+            console.print(f"[green]캐릭터 폴더 저장 (AgentPet characters.path):[/green] {path}")
+            return 0
+        if args.clear:
+            try:
+                path = sync_character_library(None)
+            except ImportError as exc:
+                console.print(f"[red]AgentPet 필요:[/red] {exc}")
+                return 1
+            console.print("[yellow]저장된 캐릭터 폴더를 지웠습니다.[/yellow]")
+            console.print(f"기본값: {path}")
+            return 0
+        root = active_character_root()
+        console.print(str(root))
+        console.print("[dim]CharacterPet 호환 · AgentPet characters.path[/dim]")
+        return 0
+
+    root = active_character_root(getattr(args, "characters", None))
+    chars = load_characters(getattr(args, "characters", None))
+    console.print(f"[dim]root: {root}[/dim]")
+    table = Table(title=f"Characters ({len(chars)})")
+    table.add_column("id")
+    table.add_column("name")
+    table.add_column("archetype")
+    table.add_column("interests")
+    for c in chars:
+        table.add_row(
+            c.id,
+            c.display_name,
+            c.persona.archetype,
+            ", ".join(c.persona.interests[:4]),
+        )
+    console.print(table)
+    return 0
+
+
 def _launch_gui(characters: Path | None = None) -> int:
     try:
         from arenatalk.game.window import run_game
@@ -101,18 +138,42 @@ def main(argv: list[str] | None = None) -> int:
             gargs = gparser.parse_args(raw)
             return _launch_gui(gargs.characters)
         console.print(f"[red]알 수 없는 명령:[/red] {raw[0]}")
-        console.print("GUI: arenatalk   CLI: arenatalk list|ranks|debate|backends|play")
+        console.print(
+            "GUI: arenatalk   CLI: arenatalk list|ranks|debate|backends|play|characters"
+        )
         return 2
 
     parser = argparse.ArgumentParser(
         prog="arenatalk",
         description="ArenaTalk — 인자 없이 실행하면 GUI. CLI는 하위 명령 사용.",
-        epilog="예: arenatalk | ./play | arenatalk debate '주제'",
+        epilog="예: arenatalk | ./play | arenatalk debate '주제' | arenatalk characters root",
     )
     sub = parser.add_subparsers(dest="cmd", required=False)
 
     p_list = sub.add_parser("list", help="로드된 캐릭터와 페르소나 요약")
     p_list.add_argument("--characters", type=Path, default=None)
+
+    p_chars = sub.add_parser(
+        "characters",
+        help="캐릭터 목록 / AgentPet 방식 캐릭터 폴더 설정 (root)",
+    )
+    p_chars.add_argument("--characters", type=Path, default=None)
+    char_sub = p_chars.add_subparsers(dest="characters_command")
+    p_root = char_sub.add_parser(
+        "root",
+        help="캐릭터 폴더 경로 출력 (AgentPet 기본과 동일)",
+    )
+    p_root.add_argument(
+        "--set",
+        type=Path,
+        default=None,
+        help="캐릭터 폴더를 AgentPet characters.path에 저장",
+    )
+    p_root.add_argument(
+        "--clear",
+        action="store_true",
+        help="저장된 캐릭터 폴더를 지우고 AgentPet 기본 경로로 복귀",
+    )
 
     p_rank = sub.add_parser("ranks", help="Elo 리더보드")
     p_rank.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -174,12 +235,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd is None or args.cmd == "play":
         return _launch_gui(getattr(args, "characters", None))
 
+    if args.cmd == "characters":
+        return _cmd_characters(args)
+
     if args.cmd == "backends":
         result = ensure_agent_clis(auto_install=False)
         providers = result.providers or preferred_providers()
         if not providers:
             console.print("[red]연결된 CLI 없음[/red]")
-            console.print("[dim]arenatalk setup 으로 유료 검사 후 없으면 무료 CLI 자동 설치[/dim]")
+            console.print(
+                "[dim]arenatalk setup 으로 유료 검사 후 없으면 무료 CLI 자동 설치[/dim]"
+            )
             return 1
         tier_label = {"paid": "유료", "free": "무료", "none": "없음"}.get(
             result.tier, result.tier
@@ -203,15 +269,11 @@ def main(argv: list[str] | None = None) -> int:
         for line in result.messages:
             console.print(f"[dim]{line}[/dim]")
         if result.installed:
-            console.print(
-                f"[green]설치됨:[/green] {', '.join(result.installed)}"
-            )
+            console.print(f"[green]설치됨:[/green] {', '.join(result.installed)}")
         providers = result.providers
         if providers:
             tier = "유료" if result.tier == "paid" else "무료"
-            console.print(
-                f"[green]{tier} 에이전트 {len(providers)}개 준비[/green]"
-            )
+            console.print(f"[green]{tier} 에이전트 {len(providers)}개 준비[/green]")
             for p in providers:
                 ver = f" · {p.version}" if p.version else ""
                 console.print(f"  • {p.display_name or p.name}{ver}")
@@ -227,6 +289,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "list":
         chars = load_characters(args.characters)
+        root = active_character_root(args.characters)
+        console.print(f"[dim]root: {root}[/dim]")
         table = Table(title=f"Characters ({len(chars)})")
         table.add_column("id")
         table.add_column("name")
@@ -273,27 +337,19 @@ def main(argv: list[str] | None = None) -> int:
         chars = load_characters(args.characters)
         if len(chars) < 2:
             console.print("[red]페르소나 있는 캐릭이 2명 이상 필요합니다.[/red]")
+            console.print(
+                f"[dim]캐릭터 폴더: {active_character_root(args.characters)}[/dim]"
+            )
+            console.print(
+                "[dim]설정: arenatalk characters root --set /path/to/characters[/dim]"
+            )
             return 1
         store = RankingStore(args.db)
-        if args.backend == "mock":
-            backend: object = MockBackend()
-        elif args.backend == "all":
-            setup = ensure_agent_clis(auto_install=False)
-            backend = EnsembleBackend(
-                providers=setup.providers or None,
-            )
-        elif args.backend == "claude":
-            backend = ClaudePrintBackend()
-        elif args.backend == "codex":
-            backend = CodexExecBackend()
-        elif args.backend == "gemini":
-            backend = GeminiPrintBackend()
-        elif args.backend == "qwen":
-            backend = QwenPrintBackend()
-        elif args.backend == "ollama":
-            backend = OllamaRunBackend()
-        else:
-            backend = CursorAgentBackend()
+        try:
+            backend = build_backend(args.backend)
+        except (RuntimeError, ValueError) as exc:
+            console.print(f"[red]백엔드 오류:[/red] {exc}")
+            return 1
         result = run_debate(
             args.topic,
             chars,

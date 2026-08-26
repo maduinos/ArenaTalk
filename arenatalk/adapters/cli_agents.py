@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
+
+# Live CLI children so debate cancel can kill hung agent processes.
+_ACTIVE_PROCS: set[subprocess.Popen[str]] = set()
+_PROCS_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -52,7 +56,7 @@ DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:7b"
 # tracking behavior as the default profile. Claude Code exposes tier aliases
 # (opus / fable / best) that follow the latest of that tier; other CLIs mostly
 # only float via their own default / Auto routing.
-# Override any with env AREATALK_MODEL_<NAME> (e.g. AREATALK_MODEL_CLAUDE=fable).
+# Override with ARENATALK_MODEL_<NAME>.
 STRONG_MODELS: dict[str, str | None] = {
     "claude": "opus",
     "codex": None,
@@ -65,9 +69,11 @@ STRONG_MODELS: dict[str, str | None] = {
 
 def resolve_model(provider: str, profile: str = "default") -> str | None:
     """Return model id to pass to a CLI, or None to use the CLI's own default."""
-    env_key = f"AREATALK_MODEL_{provider.upper()}"
-    if os.environ.get(env_key):
-        return os.environ[env_key].strip() or None
+    from arenatalk.config import env_get
+
+    raw = env_get(f"ARENATALK_MODEL_{provider.upper()}")
+    if raw:
+        return raw or None
     profile = (profile or "default").strip().lower()
     if profile in {"default", "auto", "cli"}:
         return None
@@ -293,15 +299,51 @@ BackendType = (
 )
 
 
+def cancel_active_backends() -> int:
+    """Kill in-flight agent CLI processes started by ArenaTalk. Returns kill count."""
+    killed = 0
+    with _PROCS_LOCK:
+        procs = list(_ACTIVE_PROCS)
+    for proc in procs:
+        try:
+            if proc.poll() is None:
+                proc.kill()
+                killed += 1
+        except OSError:
+            pass
+    return killed
+
+
 def _run(cmd: list[str], cwd: str | None = None, *, timeout: int = 600) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cmd,
-        check=False,
-        capture_output=True,
-        text=True,
-        cwd=cwd,
-        timeout=timeout,
-    )
+    """Run a CLI and track the Popen so cancel can interrupt it."""
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=cwd,
+        )
+    except OSError as exc:
+        return subprocess.CompletedProcess(cmd, returncode=127, stdout="", stderr=str(exc))
+
+    with _PROCS_LOCK:
+        _ACTIVE_PROCS.add(proc)
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            return subprocess.CompletedProcess(
+                cmd, returncode=-1, stdout=stdout or "", stderr=stderr or "timeout"
+            )
+        return subprocess.CompletedProcess(
+            cmd, returncode=proc.returncode or 0, stdout=stdout or "", stderr=stderr or ""
+        )
+    finally:
+        with _PROCS_LOCK:
+            _ACTIVE_PROCS.discard(proc)
 
 
 def _probe_version(binary: str) -> str:

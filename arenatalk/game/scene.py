@@ -324,6 +324,23 @@ class ArenaScene(QWidget):
                 Actor(sprite=sp, home=home, position=QPointF(home), target=QPointF(home))
             )
 
+    def reload_sprites(self, sprites: list[SpriteCharacter]) -> None:
+        """Replace lounge cast after the character library folder changes."""
+        self._sprites = list(sprites)
+        self._hovered_id = None
+        self._volunteer_order = []
+        self.clear_result()
+        self.clear_win_odds()
+        self._bubble.clear()
+        self._speech_anchor = None
+        self._speech_speaker_name = ""
+        self.set_topic("")
+        self.set_phase("")
+        self.set_status("캐릭터 폴더가 갱신되었습니다 — 주제를 입력하세요.")
+        self.set_interest({})
+        self._layout_home(self._sprites)
+        self.update()
+
     def actor(self, character_id: str) -> Actor | None:
         for a in self._actors:
             if a.character_id == character_id:

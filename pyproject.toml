@@ -1,6 +1,6 @@
 [project]
 name = "arenatalk"
-version = "0.0.1"
+version = "0.0.2"
 description = "ArenaTalk — CharacterPet debate arena with Elo ranking"
 requires-python = ">=3.10"
 dependencies = [
@@ -9,11 +9,11 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = ["PySide6>=6.5"]
-tui = ["textual>=0.80"]
 packaging = ["pyinstaller>=6.0"]
+dev = ["pytest>=8.0"]
 
 [project.scripts]
-# 기본 진입점 = GUI. CLI: list|ranks|debate|backends|setup|install|play
+# 기본 진입점 = GUI. CLI: list|ranks|debate|backends|setup|install|play|characters
 arenatalk = "arenatalk.__main__:main"
 arenatalk-play = "arenatalk.game.window:run_game_entry"
 
@@ -26,3 +26,7 @@ include = ["arenatalk*"]
 
 [tool.setuptools.package-data]
 arenatalk = ["assets/icons/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
