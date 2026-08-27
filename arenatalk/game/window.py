@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from arenatalk.adapters.agent_setup import ensure_agent_clis, preferred_providers
-from arenatalk.adapters.cli_agents import EnsembleBackend
+from arenatalk.adapters.cli_agents import AUTH_LABELS, EnsembleBackend
 from arenatalk.adapters.factory import build_backend
 from arenatalk.characters import active_character_root, load_characters
 from arenatalk.game.scene import PHASE_LABELS, ROLE_LABELS, ArenaScene
@@ -401,6 +401,15 @@ class GameWindow(QMainWindow):
         self._populate_backend_box()
         bar.addWidget(self.backend_box)
 
+        self.agent_setup_btn = QPushButton("에이전트 설정")
+        self.agent_setup_btn.setObjectName("GhostBtn")
+        self.agent_setup_btn.setToolTip(
+            "에이전트 CLI 설치 상태·로그인 상태를 확인하고\n"
+            "무료 CLI 자동 설치와 로그인을 진행합니다."
+        )
+        self.agent_setup_btn.clicked.connect(self._open_agent_setup)
+        bar.addWidget(self.agent_setup_btn)
+
         self.start_btn = QPushButton("토론 시작")
         self.start_btn.setObjectName("StartBtn")
         self.start_btn.clicked.connect(self._start_match)
@@ -422,29 +431,45 @@ class GameWindow(QMainWindow):
         self._refresh_agents()
         self._refresh_ranks()
         self._refresh_history()
+        QTimer.singleShot(400, self._nudge_agent_setup)
 
     def _populate_backend_box(self) -> None:
+        previous = self.backend_box.currentData()
         self.backend_box.clear()
         setup = getattr(self, "_agent_setup", None)
         if setup is None:
-            # Detect only — never auto-install from GUI startup.
+            # Detect only — installing is an explicit click in 「에이전트 설정」.
             setup = ensure_agent_clis(auto_install=False)
             self._agent_setup = setup
-        providers = setup.providers or preferred_providers()
-        self._discovered = providers
-        n = len(providers)
+        # Two different lists on purpose: the round-robin uses the tier-preferred
+        # selection, but the dropdown offers everything installed so a CLI the
+        # preference skipped can still be picked by hand.
+        selected = setup.providers
+        installed = setup.all_seen or preferred_providers()
+        if not selected and not installed:
+            installed = preferred_providers()
+        self._discovered = installed
+        self._selected = selected
         tier = setup.tier
-        if n:
-            names = ", ".join(p.display_name or p.name for p in providers)
+        if selected:
+            names = ", ".join(p.display_name or p.name for p in selected)
             tier_label = "유료" if tier == "paid" else "무료"
-            self.backend_box.addItem(f"자동 할당 · {tier_label} ({n}개)", "all")
+            self.backend_box.addItem(f"자동 할당 · {tier_label} ({len(selected)}개)", "all")
             self.backend_box.setItemData(0, names, Qt.ItemDataRole.ToolTipRole)
+        elif installed:
+            self.backend_box.addItem("자동 할당 (로그인 필요)", "all")
         else:
             self.backend_box.addItem("자동 할당 (감지된 CLI 없음)", "all")
         self.backend_box.addItem("mock (무료)", "mock")
-        for p in providers:
+        for p in installed:
             label = p.display_name or p.name
+            if p.blocked:
+                label += f" · {AUTH_LABELS.get(p.auth, p.auth)}"
             self.backend_box.addItem(label, p.name)
+        if previous is not None:
+            index = self.backend_box.findData(previous)
+            if index >= 0:
+                self.backend_box.setCurrentIndex(index)
 
     def _pick_character_root(self) -> None:
         if self._busy:
@@ -503,27 +528,103 @@ class GameWindow(QMainWindow):
 
     def _refresh_agents(self) -> None:
         setup = getattr(self, "_agent_setup", None)
-        providers = (
-            setup.providers
-            if setup and setup.providers
-            else preferred_providers()
-        )
-        if not providers:
+        installed = list(getattr(self, "_discovered", None) or [])
+        if not installed:
+            installed = setup.all_seen if setup else preferred_providers()
+        if not installed:
             self.agents_label.setText(
                 "감지된 에이전트 없음.\n"
-                "터미널에서 arenatalk setup 실행"
+                "「에이전트 설정」에서 무료 CLI를 자동 설치하세요."
             )
             return
-        tier = setup.tier if setup else ("paid" if any("paid" in (p.notes or "") for p in providers) else "free")
+        chosen = {p.name for p in (setup.providers if setup else [])}
+        tier = setup.tier if setup else ("paid" if any(p.tier == "paid" for p in installed) else "free")
         tier_label = "유료" if tier == "paid" else "무료"
         bits = []
-        for p in providers:
+        for p in installed:
             ver = f" · {p.version}" if p.version else ""
-            bits.append(f"• {p.display_name or p.name}{ver}")
-        self.agents_label.setText(
-            f"{tier_label} {len(providers)}개 → 출전 캐릭에 라운드로빈 할당\n"
-            + "\n".join(bits)
+            if p.blocked:
+                state = f" · {AUTH_LABELS.get(p.auth, p.auth)}"
+            elif p.name in chosen:
+                state = " · 자동 할당"
+            else:
+                state = " · 직접 선택 시"
+            bits.append(f"• {p.display_name or p.name}{ver}{state}")
+        if chosen:
+            head = f"{tier_label} {len(chosen)}개 → 출전 캐릭에 라운드로빈 할당"
+        else:
+            head = "쓸 수 있는 에이전트 없음 — 「에이전트 설정」에서 로그인하세요"
+        self.agents_label.setText(head + "\n" + "\n".join(bits))
+
+    def _open_agent_setup(self) -> None:
+        """Install / sign in to agent CLIs without leaving the app."""
+        if self._busy:
+            QMessageBox.information(
+                self, "ArenaTalk", "토론 중에는 에이전트 설정을 열 수 없습니다."
+            )
+            return
+        from arenatalk.game.agent_dialog import AgentSetupDialog
+
+        # Held on the window: the dialog owns a QThread, and dropping the last
+        # Python reference would delete it out from under a running install.
+        dialog = AgentSetupDialog(self, setup=getattr(self, "_agent_setup", None))
+        self._agent_dialog = dialog
+        dialog.exec()
+        result = dialog.result_setup
+        if result is not None:
+            self._agent_setup = result
+        self._populate_backend_box()
+        self._refresh_agents()
+
+    def _nudge_agent_setup(self) -> None:
+        """First-run helper: offer the setup dialog when nothing is usable.
+
+        Without this the .deb / .exe user just sees an empty backend list and no
+        way forward, because the only fix used to live in a terminal command.
+        """
+        setup = getattr(self, "_agent_setup", None)
+        if setup is None:
+            return
+        if any(p.ready for p in setup.providers):
+            return
+        if self._suppress_agent_prompt():
+            return
+        stranded = setup.blocked
+        if stranded and all(p.needs_plan for p in stranded):
+            names = ", ".join(p.display_name or p.name for p in stranded)
+            text = (
+                f"{names} 은(는) 로그인은 됐지만 요금제가 없어 토론을 돌릴 수 없습니다.\n"
+                "무료 CLI를 자동으로 설치하시겠습니까?"
+            )
+        elif stranded:
+            names = ", ".join(
+                f"{p.display_name or p.name}({AUTH_LABELS.get(p.auth, p.auth)})"
+                for p in stranded
+            )
+            text = f"{names} 을(를) 바로 쓸 수 없습니다.\n에이전트 설정을 여시겠습니까?"
+        else:
+            text = (
+                "사용할 수 있는 에이전트 CLI가 없습니다.\n"
+                "무료 CLI를 자동으로 설치하시겠습니까?"
+            )
+        answer = QMessageBox.question(
+            self,
+            "ArenaTalk — 에이전트 설정",
+            text + "\n\n(mock 백엔드로 먼저 둘러봐도 됩니다.)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
         )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._open_agent_setup()
+
+    @staticmethod
+    def _suppress_agent_prompt() -> bool:
+        """No modal on a headless run — nothing is there to dismiss it."""
+        import os
+
+        if os.environ.get("ARENATALK_NO_AGENT_PROMPT", "").strip():
+            return True
+        return os.environ.get("QT_QPA_PLATFORM", "").strip().startswith("offscreen")
 
     def _open_log_dir(self) -> None:
         from PySide6.QtCore import QUrl
@@ -534,10 +635,12 @@ class GameWindow(QMainWindow):
     def _build_backend(self):
         key = self.backend_box.currentData()
         profile = str(self.model_box.currentData() or "default")
-        discovered = getattr(self, "_discovered", None)
+        # Round-robin must never hand a turn to a CLI that is only installed;
+        # one stranded provider used to fail every character assigned to it.
+        chosen = [p for p in (getattr(self, "_selected", None) or []) if p.ready]
         return build_backend(
             str(key),
-            providers=list(discovered) if discovered else None,
+            providers=chosen or None,
             model_profile=profile,
             mock_think_seconds=1.6,
         )

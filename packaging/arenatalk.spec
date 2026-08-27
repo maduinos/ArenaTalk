@@ -26,6 +26,9 @@ analysis = Analysis(
         "PySide6.QtCore",
         "PySide6.QtGui",
         "PySide6.QtWidgets",
+        # Imported lazily so the debate window opens without paying for them.
+        "arenatalk.adapters.agent_auth",
+        "arenatalk.game.agent_dialog",
     ],
     hookspath=[],
     hooksconfig={},

@@ -6,7 +6,7 @@ from datetime import datetime
 from PySide6.QtCore import QObject, QThread, Signal
 
 from arenatalk.adapters.base import AgentBackend
-from arenatalk.adapters.cli_agents import EnsembleBackend
+from arenatalk.adapters.cli_agents import BackendCancelled, EnsembleBackend
 from arenatalk.engines.debate import DebateCancelled, run_debate
 from arenatalk.models import Character
 from arenatalk.ranking import RankingStore
@@ -99,7 +99,8 @@ class DebateWorker(QObject):
                 on_event=lambda m: self.log.emit(m),
             )
             self.finished.emit(result)
-        except DebateCancelled:
+        except (DebateCancelled, BackendCancelled):
+            # Both mean "the user pressed stop" — never show a failure dialog.
             self.cancelled.emit()
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc))

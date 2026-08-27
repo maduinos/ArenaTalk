@@ -5,7 +5,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
 from arenatalk.adapters.base import AgentBackend, build_system_prompt, parse_ballot
-from arenatalk.adapters.cli_agents import EnsembleBackend
+from arenatalk.adapters.cli_agents import (
+    BackendCancelled,
+    EnsembleBackend,
+    reset_cancel_state,
+)
 from arenatalk.conclusion import build_conclusion
 from arenatalk.lounge import (
     audience_weight,
@@ -60,6 +64,9 @@ def run_debate(
     on_thinking: OnThinking | None = None,
     on_progress: OnProgress | None = None,
 ) -> MatchResult:
+    # A previous debate's cancellation must not poison this one's first turn.
+    reset_cancel_state()
+
     def log(msg: str) -> None:
         if on_event:
             on_event(msg)
@@ -432,13 +439,17 @@ def _run_jobs(
         character, role, system, user, phase = job
         if on_thinking:
             on_thinking(character.id, role, phase)
-        if isinstance(backend, EnsembleBackend):
-            provider = backend.provider_for(character.id)
-            log(f"→ {character.id} via {provider} ({role})")
-            raw = backend.complete_for(character.id, system, user)
-        else:
-            log(f"→ {character.id} ({role})")
-            raw = backend.complete(system, user)
+        try:
+            if isinstance(backend, EnsembleBackend):
+                provider = backend.provider_for(character.id)
+                log(f"→ {character.id} via {provider} ({role})")
+                raw = backend.complete_for(character.id, system, user)
+            else:
+                log(f"→ {character.id} ({role})")
+                raw = backend.complete(system, user)
+        except BackendCancelled as exc:
+            # Stop killed the CLI mid-answer. That is a cancel, not a failure.
+            raise DebateCancelled(str(exc)) from exc
         if should_cancel and should_cancel():
             raise DebateCancelled("토론이 중지되었습니다.")
         speech, ballot = parse_ballot(character.id, raw)

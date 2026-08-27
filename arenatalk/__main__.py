@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.table import Table
 
 from arenatalk.adapters.agent_setup import ensure_agent_clis, preferred_providers
+from arenatalk.adapters.cli_agents import AUTH_LABELS
 from arenatalk.adapters.factory import build_backend
 from arenatalk.characters import active_character_root, load_characters
 from arenatalk.config import setup_stdio
@@ -18,11 +19,101 @@ from arenatalk.ranking import RankingStore
 console = Console()
 DEFAULT_DB = Path.home() / ".local/share/arenatalk/rankings.db"
 _CMDS = frozenset(
-    {"list", "ranks", "backends", "debate", "play", "setup", "install", "characters"}
+    {
+        "list",
+        "ranks",
+        "backends",
+        "debate",
+        "play",
+        "setup",
+        "install",
+        "characters",
+        "login",
+    }
 )
 
 
-def _cmd_install(*, with_agents: bool = True, with_desktop: bool = True) -> int:
+def _confirm_install(plan) -> bool:
+    """Show exactly what will be installed and wait for a yes.
+
+    Installing puts global packages — and possibly a multi-gigabyte model — on
+    the user's machine, so it never happens as a side effect of running setup.
+    """
+    console.print("[bold]다음을 설치합니다:[/bold]")
+    for line in plan.describe():
+        console.print(f"  • {line}")
+    if plan.heavy:
+        console.print("[yellow]  ※ ollama까지 가면 모델 다운로드가 수 GB입니다.[/yellow]")
+    if not sys.stdin.isatty():
+        console.print(
+            "[yellow]대화형 터미널이 아니어서 물어볼 수 없습니다 — "
+            "설치하려면 [bold]--yes[/bold] 를 붙이세요.[/yellow]"
+        )
+        return False
+    try:
+        answer = input("설치할까요? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        console.print()
+        return False
+    return answer in {"y", "yes"}
+
+
+def _cmd_login(provider: str | None, *, status_only: bool = False) -> int:
+    """Show login state and open the CLIs' own sign-in flows.
+
+    Sign-in always ends in a browser round-trip, so the most a tool can do is
+    put the user in front of the right command — this opens a terminal already
+    running it, then tells them to re-check.
+    """
+    from arenatalk.adapters.agent_setup import login_provider
+    from arenatalk.adapters.cli_agents import discover_providers
+
+    names = frozenset({provider}) if provider else None
+    providers = discover_providers(names=names, probe_login=True)
+    if not providers:
+        target = provider or "에이전트"
+        console.print(f"[red]{target} CLI가 설치돼 있지 않습니다.[/red]")
+        console.print("[dim]arenatalk setup 으로 무료 CLI를 자동 설치할 수 있습니다.[/dim]")
+        return 1
+
+    for p in providers:
+        state = AUTH_LABELS.get(p.auth, p.auth)
+        colour = "green" if p.auth == "ready" else ("red" if p.blocked else "yellow")
+        extra = p.account or p.auth_detail
+        console.print(
+            f"  • {p.display_name or p.name}: [{colour}]{state}[/{colour}]"
+            + (f" [dim]({extra})[/dim]" if extra else "")
+        )
+    if status_only:
+        return 0
+
+    targets = [p for p in providers if p.needs_login] if provider is None else providers
+    if not targets:
+        console.print("[green]모두 로그인되어 있습니다.[/green]")
+        return 0
+
+    failed = 0
+    for p in targets:
+        ok, message = login_provider(p)
+        console.print(
+            f"[bold]{p.display_name or p.name}[/bold]: {message}"
+            if ok
+            else f"[red]{p.display_name or p.name}: {message}[/red]"
+        )
+        if not ok:
+            failed += 1
+    console.print(
+        "[dim]로그인을 마친 뒤 arenatalk login --status 로 확인하세요.[/dim]"
+    )
+    return 1 if failed else 0
+
+
+def _cmd_install(
+    *,
+    with_agents: bool = True,
+    with_desktop: bool = True,
+    assume_yes: bool = False,
+) -> int:
     """Reinstall ArenaTalk package, optional desktop entry, then agent CLI setup."""
     import subprocess
 
@@ -51,7 +142,10 @@ def _cmd_install(*, with_agents: bool = True, with_desktop: bool = True) -> int:
         console.print(
             "[bold]3/3[/bold] 에이전트: 유료 검사 → 없으면 무료 Top3 자동 설치"
         )
-        result = ensure_agent_clis(auto_install=True)
+        result = ensure_agent_clis(
+            auto_install=True,
+            confirm=(lambda _plan: True) if assume_yes else _confirm_install,
+        )
         for line in result.messages:
             console.print(f"[dim]{line}[/dim]")
         if result.installed:
@@ -188,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Elo · 승패 · 매치 기록을 모두 초기화",
     )
 
-    sub.add_parser("backends", help="연결된 에이전트 CLI 목록 (유료 우선)")
+    sub.add_parser("backends", help="설치된 에이전트 CLI 목록 + 로그인/할당 상태")
 
     p_setup = sub.add_parser(
         "setup",
@@ -198,6 +292,28 @@ def main(argv: list[str] | None = None) -> int:
         "--no-install",
         action="store_true",
         help="설치 없이 감지만",
+    )
+    p_setup.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="설치 확인 질문 건너뛰기 (비대화형/스크립트용)",
+    )
+
+    p_login = sub.add_parser(
+        "login",
+        help="에이전트 CLI 로그인 창 열기 (인자 없으면 로그인 안 된 것 전부)",
+    )
+    p_login.add_argument(
+        "provider",
+        nargs="?",
+        choices=("claude", "codex", "cursor", "gemini", "qwen", "ollama"),
+        default=None,
+    )
+    p_login.add_argument(
+        "--status",
+        action="store_true",
+        help="로그인 상태만 출력하고 창은 열지 않음",
     )
 
     p_install = sub.add_parser(
@@ -213,6 +329,12 @@ def main(argv: list[str] | None = None) -> int:
         "--no-desktop",
         action="store_true",
         help="데스크톱 아이콘/런처 설치 건너뛰기",
+    )
+    p_install.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="에이전트 설치 확인 질문 건너뛰기",
     )
 
     p_debate = sub.add_parser("debate", help="주제 토론 실행")
@@ -245,7 +367,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "backends":
         result = ensure_agent_clis(auto_install=False)
-        providers = result.providers or preferred_providers()
+        # Everything installed, with a marker for what the round-robin picks.
+        providers = result.all_seen or preferred_providers()
+        chosen = {p.name for p in result.providers}
         if not providers:
             console.print("[red]연결된 CLI 없음[/red]")
             console.print(
@@ -260,36 +384,90 @@ def main(argv: list[str] | None = None) -> int:
         table.add_column("name")
         table.add_column("display")
         table.add_column("version")
+        table.add_column("login")
+        table.add_column("자동 할당")
         table.add_column("binary")
         for i, p in enumerate(providers, 1):
+            state = AUTH_LABELS.get(p.auth, p.auth)
+            if p.blocked:
+                state = f"[red]{state}[/red]"
+            elif p.auth == "ready":
+                state = f"[green]{state}[/green]"
             table.add_row(
-                str(i), p.name, p.display_name or p.name, p.version or "-", p.binary
+                str(i),
+                p.name,
+                p.display_name or p.name,
+                p.version or "-",
+                state,
+                "○" if p.name in chosen else "-",
+                p.binary,
             )
         console.print(table)
-        console.print("[dim]debate --backend all 시 위 목록을 라운드로빈 자동 할당[/dim]")
+        stranded = [p for p in providers if p.blocked]
+        if stranded:
+            for p in stranded:
+                fix = (
+                    "arenatalk setup (무료 CLI 설치)"
+                    if p.needs_plan
+                    else f"arenatalk login {p.name}"
+                )
+                console.print(
+                    f"[yellow]{p.name}: {AUTH_LABELS.get(p.auth, p.auth)}[/yellow]"
+                    f" — [bold]{fix}[/bold]"
+                )
+        console.print(
+            "[dim]--backend all 은 「자동 할당 ○」만 사용합니다 (유료 우선). "
+            "나머지는 --backend <name> 으로 직접 지정하세요.[/dim]"
+        )
         return 0
 
     if args.cmd == "setup":
-        result = ensure_agent_clis(auto_install=not args.no_install)
+        result = ensure_agent_clis(
+            auto_install=not args.no_install,
+            confirm=(lambda _plan: True) if args.yes else _confirm_install,
+        )
         for line in result.messages:
             console.print(f"[dim]{line}[/dim]")
         if result.installed:
             console.print(f"[green]설치됨:[/green] {', '.join(result.installed)}")
-        providers = result.providers
-        if providers:
+        usable = result.ready
+        if usable:
             tier = "유료" if result.tier == "paid" else "무료"
-            console.print(f"[green]{tier} 에이전트 {len(providers)}개 준비[/green]")
-            for p in providers:
+            console.print(f"[green]{tier} 에이전트 {len(usable)}개 준비[/green]")
+            for p in usable:
                 ver = f" · {p.version}" if p.version else ""
-                console.print(f"  • {p.display_name or p.name}{ver}")
+                who = f" · {p.account}" if p.account else ""
+                console.print(f"  • {p.display_name or p.name}{ver}{who}")
             return 0
+        stranded = result.blocked
+        if stranded:
+            for p in stranded:
+                console.print(
+                    f"[yellow]{p.display_name or p.name}: "
+                    f"{AUTH_LABELS.get(p.auth, p.auth)}[/yellow]"
+                    + (f" — {p.auth_detail}" if p.auth_detail else "")
+                )
+            if all(p.needs_plan for p in stranded):
+                console.print(
+                    "  요금제가 없으면 로그인해도 돌지 않습니다 — "
+                    "[bold]arenatalk setup[/bold] 으로 무료 CLI를 설치하세요."
+                )
+            else:
+                console.print(
+                    "  [bold]arenatalk login[/bold] 을 실행하면 로그인 창이 열립니다."
+                )
+            return 1
         console.print("[yellow]사용 가능한 CLI 없음 — mock 백엔드만 가능[/yellow]")
         return 1
+
+    if args.cmd == "login":
+        return _cmd_login(args.provider, status_only=args.status)
 
     if args.cmd == "install":
         return _cmd_install(
             with_agents=not args.no_agents,
             with_desktop=not args.no_desktop,
+            assume_yes=args.yes,
         )
 
     if args.cmd == "list":

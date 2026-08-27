@@ -50,9 +50,14 @@ jobs:
         run: |
           import subprocess, sys
 
-          # `backends` exits 1 when no agent CLI is installed, which is every
-          # CI runner. Anything above that is a real crash.
-          for args, ok in ((["backends"], (0, 1)), (["list"], (0,))):
+          # `backends` / `login` exit 1 when no agent CLI is installed or
+          # signed in, which is every CI runner. Above that is a real crash.
+          for args, ok in (
+              (["backends"], (0, 1)),
+              (["list"], (0,)),
+              (["login", "--status"], (0, 1)),
+              (["setup", "--no-install"], (0, 1)),
+          ):
               p = subprocess.run([sys.executable, "-m", "arenatalk", *args],
                                  capture_output=True, text=True,
                                  encoding="utf-8", errors="replace")
@@ -64,6 +69,9 @@ jobs:
       - name: Smoke — GUI boots offscreen
         env:
           QT_QPA_PLATFORM: offscreen
+          # Runners have no agent CLI, and a modal nobody can dismiss would
+          # turn a real startup crash into a "stayed up for 45s" pass.
+          ARENATALK_NO_AGENT_PROMPT: "1"
         shell: python
         run: |
           import subprocess, sys
@@ -96,3 +104,82 @@ jobs:
                       "import sys; sys.stdout.write('한글 토론 테스트 ✓')"])
           assert out.stdout == "한글 토론 테스트 ✓", repr(out.stdout)
           print("UTF-8 round-trip OK:", out.stdout)
+
+      - name: Smoke — free-tier auto-install (real npm install, both OSes)
+        shell: python
+        run: |
+          # Runners have no agent CLI, so this exercises the real install path
+          # end to end. Windows is the reason it exists: the .cmd shim, the
+          # %APPDATA%-style prefix and the PATH lookup all differ there and
+          # cannot be checked from a Linux dev box.
+          import os, sys, tempfile
+          from pathlib import Path
+
+          prefix = Path(tempfile.mkdtemp(prefix="arenatalk-npm-"))
+          os.environ["npm_config_prefix"] = str(prefix)
+
+          from arenatalk.adapters import agent_setup, cli_agents
+
+          # npm -g lands in <prefix> on Windows and <prefix>/bin elsewhere.
+          cli_agents._path_extras = lambda: [str(prefix), str(prefix / "bin")]
+
+          print("node major:", agent_setup.node_major())
+          assert agent_setup.node_is_usable(), "runner should ship a modern node"
+
+          plan = agent_setup.plan_free_install()
+          print("plan:", plan.describe())
+          assert plan.candidates, "nothing to install?"
+
+          # 1. No consent -> nothing may be installed.
+          result = agent_setup.ensure_agent_clis(auto_install=True)
+          assert result.installed == [], result.installed
+
+          # 2. Consent refused -> still nothing.
+          result = agent_setup.ensure_agent_clis(
+              auto_install=True, confirm=lambda _p: False
+          )
+          assert result.installed == [], result.installed
+
+          # 3. Consent given -> a free CLI actually lands and is discovered.
+          result = agent_setup.ensure_agent_clis(
+              auto_install=True,
+              confirm=lambda _p: True,
+              on_progress=lambda m: print("  ", m),
+          )
+          print("installed:", result.installed)
+          print("seen:", [(p.name, p.auth) for p in result.all_seen])
+          assert result.installed, "auto-install produced nothing"
+          assert result.all_seen, "installed but not discovered — PATH lookup broke"
+
+      - name: Smoke — stop kills the CLI on this platform
+        shell: python
+        run: |
+          # Cancelling must raise BackendCancelled (a stop), never a failure,
+          # and must actually kill the process tree — including Windows, where
+          # the kill goes through taskkill rather than killpg.
+          import sys, threading, time
+          from arenatalk.adapters import cli_agents
+          from arenatalk.adapters.cli_agents import (
+              BackendCancelled, _run, cancel_active_backends, reset_cancel_state,
+          )
+
+          reset_cancel_state()
+          box = {}
+
+          def call():
+              try:
+                  box["ok"] = _run([sys.executable, "-c", "import time; time.sleep(60)"])
+              except BaseException as exc:
+                  box["err"] = exc
+
+          t = threading.Thread(target=call)
+          t.start()
+          deadline = time.time() + 15
+          while not cli_agents._ACTIVE_PROCS and time.time() < deadline:
+              time.sleep(0.05)
+          assert cli_agents._ACTIVE_PROCS, "child never registered"
+          assert cancel_active_backends() == 1
+          t.join(timeout=30)
+          assert not t.is_alive(), "cancel did not stop the child"
+          assert isinstance(box.get("err"), BackendCancelled), box
+          print("cancel OK:", box["err"])
