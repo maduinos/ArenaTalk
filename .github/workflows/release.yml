@@ -63,10 +63,14 @@ jobs:
         run: pyinstaller --noconfirm --clean packaging/arenatalk-windows.spec
 
       - name: Smoke — the frozen exe runs
+        shell: pwsh
         run: |
-          dist\arenatalk.exe --help
-          dist\arenatalk.exe backends
-        shell: cmd
+          .\dist\arenatalk.exe --help
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # `backends` exits 1 with no agent CLI installed — normal on a runner.
+          .\dist\arenatalk.exe backends
+          if ($LASTEXITCODE -gt 1) { exit 1 }
+          exit 0
 
       - name: Name the artifact after the version
         shell: pwsh

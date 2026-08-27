@@ -33,9 +33,20 @@ jobs:
         run: python -m pytest -q
 
       - name: Smoke — CLI
+        shell: python
         run: |
-          python -m arenatalk backends
-          python -m arenatalk list
+          import subprocess, sys
+
+          # `backends` exits 1 when no agent CLI is installed, which is every
+          # CI runner. Anything above that is a real crash.
+          for args, ok in ((["backends"], (0, 1)), (["list"], (0,))):
+              p = subprocess.run([sys.executable, "-m", "arenatalk", *args],
+                                 capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace")
+              print(f"$ arenatalk {' '.join(args)} -> {p.returncode}")
+              print(p.stdout or p.stderr)
+              if p.returncode not in ok:
+                  sys.exit(f"unexpected exit {p.returncode}")
 
       - name: Smoke — GUI boots offscreen
         env:

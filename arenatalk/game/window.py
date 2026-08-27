@@ -36,6 +36,7 @@ from arenatalk.logs import DebateLogStore, match_result_from_dict, topic_title
 from arenatalk.lounge import interest_with_profile
 from arenatalk.models import MatchResult, StanceBallot
 from arenatalk import __version__
+from arenatalk.config import force_utf8_stdio
 from arenatalk.ranking import RankingStore, live_win_probs
 from arenatalk.resources import UI_FONT_FAMILY, UI_FONT_STACK
 from arenatalk.topic_frame import frame_topic
@@ -1380,4 +1381,5 @@ def run_game(characters_root: Path | None = None) -> int:
 
 
 def run_game_entry() -> None:
+    force_utf8_stdio()
     raise SystemExit(run_game())

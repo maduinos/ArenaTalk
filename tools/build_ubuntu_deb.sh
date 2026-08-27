@@ -127,7 +127,14 @@ fi
 
 printf '%s\n' "Running frozen-bundle smoke tests..."
 "$BUNDLE_ROOT/arenatalk" --help >/dev/null
-"$BUNDLE_ROOT/arenatalk" backends >/dev/null
+# `backends` exits 1 when no agent CLI is on PATH, which is the normal state
+# of a clean build machine. The smoke test only cares that it runs.
+backends_status=0
+"$BUNDLE_ROOT/arenatalk" backends >/dev/null || backends_status=$?
+if ((backends_status > 1)); then
+    printf 'The frozen bundle failed to run `backends` (exit %s).\n' "$backends_status" >&2
+    exit 1
+fi
 if [[ ! -r "$BUNDLE_ROOT/_internal/arenatalk/assets/icons/arenatalk.png" ]] \
     && [[ ! -r "$BUNDLE_ROOT/_internal/arenatalk/assets/icons/arenatalk-256.png" ]]; then
     # PyInstaller may nest package data under different layouts; accept either.

@@ -10,6 +10,7 @@ from rich.table import Table
 from arenatalk.adapters.agent_setup import ensure_agent_clis, preferred_providers
 from arenatalk.adapters.factory import build_backend
 from arenatalk.characters import active_character_root, load_characters
+from arenatalk.config import force_utf8_stdio
 from arenatalk.engines.debate import run_debate
 from arenatalk.logs import DebateLogStore
 from arenatalk.ranking import RankingStore
@@ -124,6 +125,10 @@ def _launch_gui(characters: Path | None = None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Before argparse or rich can write: the help text is Korean and the
+    # Windows console defaults to a codec that cannot encode it.
+    force_utf8_stdio()
+
     raw = list(sys.argv[1:] if argv is None else argv)
 
     # Bare launch → GUI
