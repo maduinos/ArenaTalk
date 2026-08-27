@@ -54,9 +54,10 @@ executable = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    # True so CLI subcommands (list, debate, …) print to the terminal.
-    # The cost is a console window behind the GUI on a double-click launch.
-    console=True,
+    # False so a double-click opens the GUI alone, with no console flashing
+    # behind it. CLI subcommands still print: setup_stdio() reattaches to the
+    # caller's console when the process was started from a terminal.
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

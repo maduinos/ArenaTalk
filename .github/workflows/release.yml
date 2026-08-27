@@ -67,12 +67,22 @@ jobs:
       - name: Smoke — the frozen exe runs
         shell: pwsh
         run: |
-          .\dist\arenatalk.exe --help
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # The exe is GUI-subsystem, so PowerShell would return without
+          # waiting on a bare call. Start-Process -Wait gives a real exit code,
+          # and redirecting stdout hands the child a valid handle to print to.
+          function Run-Exe([string[]]$Args, [int[]]$Ok) {
+            $p = Start-Process -FilePath .\dist\arenatalk.exe -ArgumentList $Args `
+                   -Wait -PassThru -NoNewWindow `
+                   -RedirectStandardOutput out.txt -RedirectStandardError err.txt
+            Write-Host "$ arenatalk $($Args -join ' ') -> $($p.ExitCode)"
+            Get-Content out.txt, err.txt -ErrorAction SilentlyContinue
+            if ($Ok -notcontains $p.ExitCode) {
+              throw "unexpected exit $($p.ExitCode)"
+            }
+          }
+          Run-Exe @('--help') @(0)
           # `backends` exits 1 with no agent CLI installed — normal on a runner.
-          .\dist\arenatalk.exe backends
-          if ($LASTEXITCODE -gt 1) { exit 1 }
-          exit 0
+          Run-Exe @('backends') @(0, 1)
 
       - name: Name the artifact after the version
         shell: pwsh
