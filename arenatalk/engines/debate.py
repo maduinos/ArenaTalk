@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 from typing import Callable
 
 from arenatalk.adapters.base import AgentBackend, build_system_prompt, parse_ballot
@@ -28,6 +29,10 @@ from arenatalk.research import research_topic
 from arenatalk.topic_frame import frame_topic
 
 ROLE_CYCLE = ("advocate", "critic", "evidence")
+
+# Concurrent lounge CLI calls during the main debate. Enough to finish inside
+# the remaining rounds; low enough not to race the cast for the rate limit.
+LOUNGE_PREFETCH_WORKERS = 3
 
 OnCast = Callable[[list[tuple[Character, float]], dict[str, str]], None]
 OnTurn = Callable[[str, str, str, str, str, float], None]  # id, role, speech, phase, rec, conf
@@ -56,6 +61,7 @@ def run_debate(
     research: bool = True,
     apply_ranking: bool = True,
     lounge_vote: bool = True,
+    lounge_prefetch: bool = True,
     should_cancel: Callable[[], bool] | None = None,
     live_materials: Callable[[], str] | None = None,
     on_event: Callable[[str], None] | None = None,
@@ -110,10 +116,29 @@ def run_debate(
     if len(cast) < 2:
         raise RuntimeError("need at least 2 characters with personas")
 
+    lounge_voters: list[Character] = []
+    if lounge_vote:
+        lounge_voters = pick_lounge_voters(
+            topic,
+            roster,
+            {c.id for c in cast},
+            profiles=profiles,
+        )
+
     assignment: dict[str, str] = {}
     if isinstance(backend, EnsembleBackend):
-        assignment = backend.assign([c.id for c in cast])
-        log("providers: " + ", ".join(f"{cid}→{prov}" for cid, prov in assignment.items()))
+        # So a provider being retired mid-debate shows up in the live log.
+        backend.on_event = log
+        # Cast first so their indices — and therefore their providers — do not
+        # shift when the lounge is appended. A prefetch needs the mapping to
+        # exist before the main debate starts.
+        assignment = backend.assign(
+            [c.id for c in cast] + [c.id for c in lounge_voters]
+        )
+        log(
+            "providers: "
+            + ", ".join(f"{cid}→{assignment[cid]}" for cid in (c.id for c in cast))
+        )
 
     if on_cast:
         on_cast(picked, assignment)
@@ -165,15 +190,6 @@ def run_debate(
     def sys_for(character: Character, role: str) -> str:
         return build_system_prompt(character, role, topic_brief=frame.brief)
 
-    lounge_voters: list[Character] = []
-    if lounge_vote:
-        lounge_voters = pick_lounge_voters(
-            topic,
-            roster,
-            {c.id for c in cast},
-            profiles=profiles,
-        )
-
     n_cast = len(cast)
     total_turns = n_cast * (1 + rounds + 1) + len(lounge_voters)
     turn_i = 0
@@ -223,6 +239,50 @@ def run_debate(
             }
         )
 
+    # --- lounge votes, started now and collected at the end -------------
+    #
+    # The audience used to vote strictly after the closing statements, one
+    # member at a time, each with a speech pause — up to twelve serial CLI
+    # calls bolted onto a debate that had already finished. Nothing about
+    # those calls needs the closing statements: an audience forms its view
+    # while it watches. So they run against the opening statements, in the
+    # background, and by the last round the answers are already in hand.
+    lounge_future = None
+    lounge_pool: ThreadPoolExecutor | None = None
+
+    def start_lounge_prefetch() -> None:
+        """Kick the audience off against the debate as it stands right now."""
+        nonlocal lounge_future, lounge_pool
+        if not (lounge_voters and lounge_prefetch) or lounge_future is not None:
+            return
+        jobs = _build_lounge_jobs(
+            lounge_voters,
+            topic=topic,
+            frame=frame,
+            profiles=profiles,
+            context=context_block(),
+            debate_so_far=_format_transcript(transcript),
+            cast_summary="(본선 진행 중 — 최종 투표는 아직 나오지 않았다)",
+            in_progress=True,
+        )
+        log(f"대기실 {len(lounge_voters)}명 여론 조사 시작 (본선과 동시 진행)")
+        lounge_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lounge")
+        lounge_future = lounge_pool.submit(
+            _run_jobs,
+            jobs,
+            backend,
+            parallel=True,
+            # A handful at a time: enough to finish inside the main debate
+            # without twelve CLI processes racing the cast for rate limit.
+            max_workers=LOUNGE_PREFETCH_WORKERS,
+            log=lambda _m: None,  # quiet — the main debate owns the log here
+            speech_hold=False,
+            should_cancel=should_cancel,
+        )
+
+    if rounds < 1:
+        start_lounge_prefetch()
+
     for r in range(1, rounds + 1):
         check_cancel()
         snapshot = _format_transcript(transcript)
@@ -263,6 +323,11 @@ def run_debate(
                     "confidence": f"{ballot.confidence:.3f}",
                 }
             )
+        if r == 1:
+            # After the first rebuttal, not after the openings: the audience
+            # gets the clash it is actually reacting to, and everything still
+            # to come (later rounds plus the closing) covers the poll's cost.
+            start_lounge_prefetch()
 
     check_cancel()
     final_snap = _format_transcript(transcript)
@@ -312,42 +377,44 @@ def run_debate(
     audience_consensus_p = 0.0
     if lounge_voters:
         check_cancel()
-        log(f"대기실 여론 투표 · {len(lounge_voters)}명")
-        if isinstance(backend, EnsembleBackend):
-            # Extend round-robin so lounge voters have providers too.
-            assignment = backend.assign(
-                [c.id for c in cast] + [c.id for c in lounge_voters]
+        lounge_results: list[tuple[Character, str, str, StanceBallot]] = []
+        if lounge_future is not None:
+            if not lounge_future.done():
+                log("대기실 표 집계를 기다리는 중…")
+            try:
+                lounge_results = _await_lounge(lounge_future, should_cancel)
+            except _LoungeFailed as exc:
+                # The audience is a garnish; a finished debate is not thrown
+                # away because one waiting-room CLI fell over.
+                log(f"대기실 여론 수집 실패 — 본선 결과만 사용합니다: {exc}")
+                lounge_results = []
+            finally:
+                if lounge_pool is not None:
+                    lounge_pool.shutdown(wait=False)
+        else:
+            log(f"대기실 여론 투표 · {len(lounge_voters)}명")
+            lounge_results = _run_jobs(
+                _build_lounge_jobs(
+                    lounge_voters,
+                    topic=topic,
+                    frame=frame,
+                    profiles=profiles,
+                    context=context_block(),
+                    debate_so_far=final_snap,
+                    cast_summary=_format_cast_ballots(ballots, cast),
+                    in_progress=False,
+                ),
+                backend,
+                parallel=bool(parallel),
+                log=log,
+                on_turn=turn,
+                on_thinking=thinking,
+                on_progress_bump=bump,
+                speech_hold=speech_hold,
+                speech_hold_scale=max(0.45, speech_hold_scale * 0.55),
+                should_cancel=should_cancel,
             )
-        cast_summary = _format_cast_ballots(ballots, cast)
-        lounge_jobs = []
-        for character in lounge_voters:
-            profile = profiles.get(character.id)
-            system = build_lounge_system_prompt(
-                character, topic_brief=frame.brief, profile=profile
-            )
-            user = (
-                f"{context_block()}"
-                f"사용자 주제:\n{topic}\n\n"
-                f"본선 토론 요약:\n{final_snap}\n\n"
-                f"본선 최종 투표:\n{cast_summary}\n\n"
-                "단계: 대기실 여론 투표\n"
-                "위 본선 결과를 참고하되, 네 성향대로 표를 던져라.\n"
-            )
-            lounge_jobs.append(
-                (character, "lounge_vote", system, user, "audience")
-            )
-        lounge_results = _run_jobs(
-            lounge_jobs,
-            backend,
-            parallel=bool(parallel),
-            log=log,
-            on_turn=turn,
-            on_thinking=thinking,
-            on_progress_bump=bump,
-            speech_hold=speech_hold,
-            speech_hold_scale=max(0.45, speech_hold_scale * 0.55),
-            should_cancel=should_cancel,
-        )
+
         for character, role, speech, ballot in lounge_results:
             transcript.append(
                 {
@@ -359,6 +426,23 @@ def run_debate(
                 }
             )
             audience_ballots.append(ballot)
+            if lounge_future is not None:
+                # Already-fetched votes reveal at once: the point of prefetching
+                # is not to replay twelve speeches the user is waiting through.
+                turn(
+                    character.id,
+                    role,
+                    speech,
+                    "audience",
+                    ballot.recommendation,
+                    float(ballot.confidence),
+                )
+                bump("audience")
+        if audience_ballots:
+            log("대기실 여론: " + _tally(audience_ballots))
+        # Keep the progress bar honest when some voters dropped out.
+        for _ in range(len(lounge_voters) - len(lounge_results)):
+            bump("audience")
 
         def _w(b: StanceBallot) -> float:
             return audience_weight(b, profiles.get(b.character_id))
@@ -412,6 +496,74 @@ def _format_cast_ballots(ballots: list[StanceBallot], cast: list[Character]) -> 
     return "\n".join(lines)
 
 
+def _build_lounge_jobs(
+    voters: list[Character],
+    *,
+    topic: str,
+    frame,
+    profiles: dict,
+    context: str,
+    debate_so_far: str,
+    cast_summary: str,
+    in_progress: bool,
+) -> list[tuple[Character, str, str, str, str]]:
+    """Lounge ballot prompts, for either the prefetch or the old serial path."""
+    stage = (
+        "단계: 대기실 여론 투표 (본선 진행 중)\n"
+        "지금까지 나온 발언만 보고, 네 성향대로 표를 던져라.\n"
+        if in_progress
+        else "단계: 대기실 여론 투표\n"
+        "위 본선 결과를 참고하되, 네 성향대로 표를 던져라.\n"
+    )
+    heading = "본선 진행 상황" if in_progress else "본선 토론 요약"
+    jobs: list[tuple[Character, str, str, str, str]] = []
+    for character in voters:
+        system = build_lounge_system_prompt(
+            character, topic_brief=frame.brief, profile=profiles.get(character.id)
+        )
+        user = (
+            f"{context}"
+            f"사용자 주제:\n{topic}\n\n"
+            f"{heading}:\n{debate_so_far}\n\n"
+            f"본선 투표:\n{cast_summary}\n\n"
+            f"{stage}"
+        )
+        jobs.append((character, "lounge_vote", system, user, "audience"))
+    return jobs
+
+
+def _await_lounge(future, should_cancel: Callable[[], bool] | None):
+    """Wait on the prefetch without swallowing a stop request."""
+    while True:
+        if should_cancel and should_cancel():
+            future.cancel()
+            raise DebateCancelled("토론이 중지되었습니다.")
+        try:
+            return future.result(timeout=0.25)
+        except FuturesTimeout:
+            continue
+        except (DebateCancelled, BackendCancelled):
+            # A stop reached the prefetch first; it is still a stop.
+            raise DebateCancelled("토론이 중지되었습니다.") from None
+        except Exception as exc:  # noqa: BLE001
+            # One dead audience member must not throw away a finished debate.
+            raise _LoungeFailed(str(exc)) from exc
+
+
+class _LoungeFailed(Exception):
+    """The audience poll failed; the main debate result still stands."""
+
+
+def _tally(ballots: list[StanceBallot]) -> str:
+    counts: dict[str, int] = {}
+    for b in ballots:
+        counts[b.recommendation or "중립"] = counts.get(b.recommendation or "중립", 0) + 1
+    order = ["찬성", "반대", "중립"]
+    bits = [f"{k} {counts[k]}" for k in order if counts.get(k)]
+    bits += [f"{k} {v}" for k, v in counts.items() if k not in order]
+    return " · ".join(bits) or "(표 없음)"
+
+
 def _speech_hold_seconds(speech: str, scale: float = 1.0) -> float:
     n = len((speech or "").strip())
     base = min(14.0, max(4.5, 3.2 + n * 0.07))
@@ -423,6 +575,7 @@ def _run_jobs(
     backend: AgentBackend | EnsembleBackend,
     *,
     parallel: bool,
+    max_workers: int | None = None,
     log: Callable[[str], None],
     on_turn: OnTurn | None = None,
     on_thinking: OnThinking | None = None,
@@ -480,7 +633,8 @@ def _run_jobs(
         return [one(job) for job in jobs]
 
     ordered: list[tuple[Character, str, str, StanceBallot] | None] = [None] * len(jobs)
-    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+    workers = max(1, min(max_workers or len(jobs), len(jobs)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(one, job): idx for idx, job in enumerate(jobs)}
         try:
             for fut in as_completed(futures):

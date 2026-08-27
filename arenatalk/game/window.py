@@ -669,7 +669,7 @@ class GameWindow(QMainWindow):
         self._stop_replay()
         self.topic_input.clear()
         self.scene.clear_result()
-        self.scene.clear_win_odds()
+        self.scene.clear_win_odds(keep_lounge_votes=False)
         title = topic_title(topic)
         self.scene.set_topic(title)
         self._live_ballots = {}
@@ -899,9 +899,12 @@ class GameWindow(QMainWindow):
         recommendation: str = "",
         confidence: float = 0.0,
     ) -> None:
-        self.scene.show_speech(character_id, speech)
+        is_lounge = phase == "audience" or role == "lounge_vote"
+        if not is_lounge:
+            # The waiting room votes, it does not make speeches — and the votes
+            # now all arrive at once, so a dozen bubbles would only flicker.
+            self.scene.show_speech(character_id, speech)
         if recommendation:
-            is_lounge = phase == "audience" or role == "lounge_vote"
             ballot = StanceBallot(
                 character_id=character_id,
                 recommendation=recommendation,
@@ -990,6 +993,19 @@ class GameWindow(QMainWindow):
         )
         self.progress_label.setText(f"종료 · 승자 {winner}")
         self.scene.set_status("토론 종료 — 결과 확인 중…")
+        if is_lounge:
+            # Prefetched audience votes all land at once. Twelve full speeches
+            # dumped into the log is exactly the wall of text the user was
+            # waiting through before — one line each is the point.
+            colour = {"찬성": "#4ade80", "반대": "#f87171"}.get(recommendation, "#94a3b8")
+            self._append_log(
+                f"<div style='margin:1px 0 1px 10px;color:#94a3b8'>"
+                f"🪑 {self._esc(name)} · "
+                f"<span style='color:{colour};font-weight:600'>"
+                f"{self._esc(recommendation or '중립')}</span>"
+                f" <span style='color:#64748b'>{float(confidence):.0%}</span></div>"
+            )
+            return
         if conclusion:
             body = self._esc(conclusion).replace("\n", "<br>")
             self._append_log(
@@ -1257,7 +1273,7 @@ class GameWindow(QMainWindow):
         self.stop_replay_btn.setEnabled(True)
         self.transcript.clear()
         self.scene.clear_result()
-        self.scene.clear_win_odds()
+        self.scene.clear_win_odds(keep_lounge_votes=False)
         self.scene.set_topic(topic_title(result.topic))
         cast_ids = list(result.participants)
         self._pending_cast = cast_ids

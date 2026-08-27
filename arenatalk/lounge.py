@@ -11,11 +11,10 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from arenatalk.interest import interest_score, tokenize
+from arenatalk.interest import interest_score
 from arenatalk.models import Character, StanceBallot
 
 LEARN_RATE = 0.08
-MAX_LOUNGE_VOTERS = 12
 MAX_SIGNATURE = 5
 MAX_DOMAIN_KEYS = 24
 
@@ -85,8 +84,15 @@ class LoungeProfile:
         if self.votes <= 0 and not self.domain_affinity:
             return ""
         top_domain = ""
-        if self.domain_affinity:
-            top_domain = max(self.domain_affinity.items(), key=lambda x: x[1])[0]
+        # Profiles written before tags were filtered still hold junk keys, so
+        # filter on the way out too rather than making the user reset Elo.
+        usable = {
+            k: v
+            for k, v in self.domain_affinity.items()
+            if _is_useful_tag(_strip_particle(k))
+        }
+        if usable:
+            top_domain = max(usable.items(), key=lambda x: x[1])[0]
         lean = max(self.stance_prior.items(), key=lambda x: x[1])[0]
         lean_kr = {"support": "찬성파", "oppose": "신중파", "abstain": "유보형"}.get(
             lean, "관전"
@@ -96,17 +102,68 @@ class LoungeProfile:
         return lean_kr
 
 
+# Junk that earlier versions wrote into stored profiles when they fell back to
+# slicing the topic. Nothing produces these any more; the list exists so the
+# chips of long-running installs stop reading 것이다·찬성파 without asking the
+# user to reset their Elo history.
+_STOP_TOKENS: frozenset[str] = frozenset(
+    {
+        "것이다", "것인가", "것일까", "한다", "하다", "된다", "되다", "이다",
+        "있다", "없다", "합니다", "입니다", "해야", "하는", "하지", "인가",
+        "일까", "인지", "그리고", "그러나", "하지만", "그래서", "때문에",
+        "위해", "대해", "관해", "통해", "계속", "정말", "매우", "가장",
+        "이번", "다음", "지금", "여기", "저기", "우리", "너무", "많이",
+        "어떻게", "무엇", "누가", "언제", "어디", "그것", "이것", "저것",
+        "상승할", "하락할", "인상한다", "인하한다", "늘려야", "줄여야",
+    }
+)
+
+
+# Particles that ride on the end of a Korean noun. Stripping them turns
+# 채권금리는 into 채권금리, which is the thing the chip should actually name.
+_PARTICLES: tuple[str, ...] = (
+    "에서는", "으로는", "에게는", "에서", "으로", "까지", "부터", "보다",
+    "에게", "한테", "라면", "다면", "이나", "이란", "이는", "은", "는",
+    "이", "가", "을", "를", "의", "에", "도", "로", "와", "과", "만",
+)
+
+
+def _strip_particle(token: str) -> str:
+    """Drop one trailing particle, but never down to a single syllable."""
+    for particle in _PARTICLES:
+        if token.endswith(particle) and len(token) - len(particle) >= 2:
+            return token[: -len(particle)]
+    return token
+
+
+def _is_useful_tag(token: str) -> bool:
+    if len(token) < 2 or len(token) > 8:
+        return False
+    if token in _STOP_TOKENS:
+        return False
+    # Verb/adjective endings that mean the token is a conjugation, not a noun.
+    return not token.endswith(("한다", "했다", "된다", "이다", "하는", "할까", "인가"))
+
+
 def extract_domain_tags(topic: str) -> list[str]:
+    """Domain labels for a topic, in decreasing order of confidence."""
+    from arenatalk.expertise import EXPERT_DOMAINS
+
     text = (topic or "").lower()
     tags: list[str] = []
+    # The expert vocabulary is both wider and more specific than _DOMAIN_RULES,
+    # which files a question about 주식 under "비용". Ask it first.
+    for domain, vocab in EXPERT_DOMAINS.items():
+        if any(word.lower() in text for word in vocab):
+            tags.append(domain.split("·")[0])
     for keys, tag in _DOMAIN_RULES:
-        if any(k.lower() in text for k in keys):
+        if tag not in tags and any(k.lower() in text for k in keys):
             tags.append(tag)
-    if not tags:
-        # fallback: first few topic tokens as soft domains
-        for tok in sorted(tokenize(topic))[:3]:
-            if len(tok) >= 2:
-                tags.append(tok[:8])
+    # No third guess. Slicing the topic into tokens used to fill the gap, but
+    # Korean does not survive it: 것이다, 인상한, 적절한 are conjugations and
+    # particles, not fields, and they ended up on the waiting room's chips and
+    # in the stored profiles. A domain we cannot name is better left unnamed —
+    # the chip falls back to temperament alone.
     return tags[:6]
 
 
@@ -133,8 +190,14 @@ def pick_lounge_voters(
     cast_ids: set[str],
     *,
     profiles: dict[str, LoungeProfile] | None = None,
-    limit: int = MAX_LOUNGE_VOTERS,
 ) -> list[Character]:
+    """Everyone not on stage, most interested first.
+
+    The whole waiting room votes. Capping it at twelve produced a "여론" that
+    silently excluded whoever happened to score low on the topic — and the cost
+    that justified the cap is gone now that the poll runs during the debate
+    instead of after it. Ordering still decides who is asked first.
+    """
     lounge = [c for c in roster if c.id not in cast_ids]
     if not lounge:
         return []
@@ -143,7 +206,7 @@ def pick_lounge_voters(
         (interest_with_profile(topic, c, profiles.get(c.id)), c) for c in lounge
     ]
     scored.sort(key=lambda x: (-x[0], x[1].id))
-    return [c for _, c in scored[: max(1, limit)]]
+    return [c for _, c in scored]
 
 
 def _ema(old: float, target: float, rate: float = LEARN_RATE) -> float:

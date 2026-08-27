@@ -336,7 +336,7 @@ class ArenaScene(QWidget):
         self._hovered_id = None
         self._volunteer_order = []
         self.clear_result()
-        self.clear_win_odds()
+        self.clear_win_odds(keep_lounge_votes=False)
         self._bubble.clear()
         self._speech_anchor = None
         self._speech_speaker_name = ""
@@ -494,10 +494,23 @@ class ArenaScene(QWidget):
                 a.stance_label = stances[a.character_id]
         self.update()
 
-    def clear_win_odds(self) -> None:
+    def clear_win_odds(self, *, keep_lounge_votes: bool = True) -> None:
+        """Drop the arena's live odds. The waiting room's votes are not that.
+
+        An audience opinion is a result worth reading after the debate ends, so
+        it survives the walk home and stays until the next debate replaces it.
+        """
         for a in self._actors:
             a.win_odds = 0.0
-            a.stance_label = ""
+            if a.selected or not keep_lounge_votes:
+                a.stance_label = ""
+        self.update()
+
+    def clear_lounge_votes(self) -> None:
+        """Wipe the waiting room's opinions — only when a new debate starts."""
+        for a in self._actors:
+            if not a.selected:
+                a.stance_label = ""
         self.update()
 
     def move_cast_to_arena(self, cast_ids: list[str]) -> None:
