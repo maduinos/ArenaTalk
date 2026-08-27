@@ -155,5 +155,9 @@ def start_debate_thread(
     worker.finished.connect(worker.deleteLater)
     worker.failed.connect(worker.deleteLater)
     worker.cancelled.connect(worker.deleteLater)
-    thread.finished.connect(thread.deleteLater)
+    # Deliberately NOT thread.finished.connect(thread.deleteLater): the caller
+    # still holds this QThread and inspects it when the debate ends. Letting Qt
+    # delete it behind their back crashed the app on any failure — the modal
+    # error box pumps the event loop, the deferred delete lands, and the very
+    # next line touches a dead C++ object. The window deletes it explicitly.
     return thread, worker

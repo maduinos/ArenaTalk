@@ -10,6 +10,7 @@ import tempfile
 import threading
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Callable
 
 # Live CLI children so debate cancel can kill hung agent processes.
 _ACTIVE_PROCS: set[subprocess.Popen[str]] = set()
@@ -862,6 +863,9 @@ class EnsembleBackend:
                 p.name, p.binary, self.work_root, model=model
             )
         self.assignment: dict[str, str] = {}
+        # Providers that failed in a way that will repeat for every later turn.
+        self._dead: dict[str, str] = {}
+        self.on_event: Callable[[str], None] | None = None
         self.discovery_summary = format_provider_list(self.providers)
 
     def model_summary(self) -> str:
@@ -890,10 +894,79 @@ class EnsembleBackend:
             raise KeyError(f"unassigned character: {character_id}")
         return self.assignment[character_id]
 
+    def healthy_names(self) -> list[str]:
+        return [p.name for p in self.providers if p.name not in self._dead]
+
+    def _substitute(self, character_id: str, avoid: str) -> str | None:
+        """Move this character onto a CLI that still answers, round-robin."""
+        healthy = [n for n in self.healthy_names() if n != avoid]
+        if not healthy:
+            return None
+        # Spread reassignments instead of dogpiling the first survivor.
+        index = sorted(self.assignment).index(character_id) if character_id in self.assignment else 0
+        pick = healthy[index % len(healthy)]
+        self.assignment[character_id] = pick
+        return pick
+
+    def _retire(self, name: str, reason: str) -> None:
+        if name in self._dead:
+            return
+        self._dead[name] = reason
+        self._event(f"{name} 제외 — {reason}. 남은 CLI로 계속합니다.")
+
+    def _event(self, message: str) -> None:
+        if self.on_event is not None:
+            try:
+                self.on_event(message)
+            except Exception:  # noqa: BLE001 - logging must never break a debate
+                pass
+
     def complete_for(self, character_id: str, system: str, user: str) -> str:
+        """Run this character's turn, moving them off a CLI that has died.
+
+        A rate-limited Codex used to end the whole debate: every character it
+        was assigned failed, one after another, with the same error. The failure
+        is per-provider, not per-turn, so retire the provider and hand the turn
+        to one that still works.
+        """
+        from arenatalk.adapters.agent_auth import provider_is_exhausted
+
         name = self.provider_for(character_id)
-        return self._backends[name].complete(system, user)
+        if name in self._dead:
+            name = self._substitute(character_id, name)
+            if name is None:
+                raise RuntimeError(self._all_dead_message())
+
+        tried: set[str] = set()
+        last: RuntimeError | None = None
+        while name is not None and name not in tried:
+            tried.add(name)
+            try:
+                return self._backends[name].complete(system, user)
+            except BackendCancelled:
+                raise
+            except RuntimeError as exc:
+                reason = provider_is_exhausted(str(exc))
+                if not reason:
+                    raise
+                last = exc
+                self._retire(name, reason)
+                name = self._substitute(character_id, name)
+                if name is not None:
+                    self._event(f"{character_id} → {name} 로 교체 후 재시도")
+
+        message = self._all_dead_message()
+        raise RuntimeError(f"{last}\n\n{message}" if last else message) from last
+
+    def _all_dead_message(self) -> str:
+        dead = ", ".join(f"{n}({r})" for n, r in self._dead.items())
+        return (
+            f"쓸 수 있는 에이전트가 모두 소진됐습니다: {dead}\n"
+            "「에이전트 설정」에서 다른 CLI를 추가하거나 한도가 풀린 뒤 다시 시도하세요."
+        )
 
     def complete(self, system: str, user: str) -> str:
-        name = self.providers[0].name
-        return self._backends[name].complete(system, user)
+        healthy = self.healthy_names()
+        if not healthy:
+            raise RuntimeError(self._all_dead_message())
+        return self._backends[healthy[0]].complete(system, user)

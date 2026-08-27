@@ -134,6 +134,24 @@ _RETIRED_MARKERS: tuple[str, ...] = (
 )
 
 
+def provider_is_exhausted(text: str) -> str:
+    """Why this CLI cannot serve any more turns, or "" if it is a normal error.
+
+    Distinguishes the failures that will repeat for every remaining turn — no
+    account, no plan, no quota left, a discontinued route — from the ordinary
+    ones worth trying again. Returns a short Korean reason for the log.
+    """
+    if looks_like_retired_route(text):
+        return "로그인 방식 중단"
+    if looks_like_quota_failure(text):
+        return "사용 한도 소진"
+    if looks_like_plan_failure(text):
+        return "요금제/크레딧 부족"
+    if looks_like_login_failure(text):
+        return "로그인 필요"
+    return ""
+
+
 def looks_like_retired_route(text: str) -> bool:
     """True when the vendor discontinued the auth route this CLI is using."""
     low = (text or "").lower()

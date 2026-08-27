@@ -476,3 +476,145 @@ def test_qwen_missing_credentials_reads_as_a_login_problem() -> None:
         "No auth type is selected. Please configure an auth type "
         "(e.g. via settings or `--auth-type`) before running in non-interactive mode."
     )
+
+
+def _ensemble(names: list[str]):
+    from arenatalk.adapters.cli_agents import EnsembleBackend
+
+    return EnsembleBackend(
+        providers=[_info(n, "paid", "ready") for n in names], auto_discover=False
+    )
+
+
+class _FakeCLI:
+    def __init__(self, name: str, error: str | None = None) -> None:
+        self.name, self.error, self.calls = name, error, 0
+
+    def complete(self, system: str, user: str) -> str:
+        self.calls += 1
+        if self.error:
+            raise RuntimeError(self.error)
+        return self.name
+
+
+RATE_LIMIT = "Codex: 429 Too Many Requests / rate limit exceeded"
+
+
+def test_a_rate_limited_provider_does_not_end_the_debate() -> None:
+    """One CLI hitting its limit used to fail every turn assigned to it."""
+    eb = _ensemble(["claude", "codex", "cursor"])
+    events: list[str] = []
+    eb.on_event = events.append
+    eb._backends = {
+        "claude": _FakeCLI("claude"),
+        "codex": _FakeCLI("codex", RATE_LIMIT),
+        "cursor": _FakeCLI("cursor"),
+    }
+    eb.assign(["a", "b", "c", "d"])
+    answers = [eb.complete_for(cid, "s", "u") for cid in ("a", "b", "c", "d")]
+
+    assert "codex" not in answers, answers
+    assert len(answers) == 4
+    assert eb.healthy_names() == ["claude", "cursor"]
+    assert any("한도" in e for e in events), events
+
+
+def test_a_dead_provider_is_not_tried_a_second_time() -> None:
+    eb = _ensemble(["claude", "codex"])
+    codex = _FakeCLI("codex", RATE_LIMIT)
+    eb._backends = {"claude": _FakeCLI("claude"), "codex": codex}
+    eb.assign(["a", "b", "c", "d"])
+    for cid in ("a", "b", "c", "d"):
+        eb.complete_for(cid, "s", "u")
+    assert codex.calls == 1, "the exhausted CLI should be asked exactly once"
+
+
+def test_an_ordinary_error_does_not_retire_a_provider() -> None:
+    """Only account/quota failures repeat for every turn; others may be flukes."""
+    eb = _ensemble(["claude", "codex"])
+    eb._backends = {
+        "claude": _FakeCLI("claude"),
+        "codex": _FakeCLI("codex", "model returned malformed JSON"),
+    }
+    eb.assign(["a", "b"])
+    eb.complete_for("a", "s", "u")
+    with pytest.raises(RuntimeError, match="malformed"):
+        eb.complete_for("b", "s", "u")
+    assert eb.healthy_names() == ["claude", "codex"]
+
+
+def test_when_every_provider_is_exhausted_the_error_says_so() -> None:
+    eb = _ensemble(["claude", "codex"])
+    eb._backends = {
+        "claude": _FakeCLI("claude", RATE_LIMIT),
+        "codex": _FakeCLI("codex", RATE_LIMIT),
+    }
+    eb.assign(["a", "b"])
+    with pytest.raises(RuntimeError) as caught:
+        for cid in ("a", "b"):
+            eb.complete_for(cid, "s", "u")
+    assert "모두 소진" in str(caught.value)
+
+
+def test_cancel_is_never_mistaken_for_an_exhausted_provider() -> None:
+    from arenatalk.adapters.cli_agents import BackendCancelled
+
+    eb = _ensemble(["claude", "codex"])
+
+    class _Cancelled:
+        def complete(self, system: str, user: str) -> str:
+            raise BackendCancelled("사용자가 토론을 중지했습니다.")
+
+    eb._backends = {"claude": _Cancelled(), "codex": _FakeCLI("codex")}
+    eb.assign(["a"])
+    with pytest.raises(BackendCancelled):
+        eb.complete_for("a", "s", "u")
+    assert eb.healthy_names() == ["claude", "codex"]
+
+
+def test_failover_walks_the_whole_bench_before_giving_up() -> None:
+    """A retry that also hits a limit must retire that CLI too, not just raise."""
+    eb = _ensemble(["claude", "codex", "cursor"])
+    events: list[str] = []
+    eb.on_event = events.append
+    eb._backends = {
+        "claude": _FakeCLI("claude", RATE_LIMIT),
+        "codex": _FakeCLI("codex", RATE_LIMIT),
+        "cursor": _FakeCLI("cursor"),
+    }
+    eb.assign(["a"])
+    assert eb.complete_for("a", "s", "u") == "cursor"
+    assert eb.healthy_names() == ["cursor"]
+    assert sum("제외" in e for e in events) == 2, events
+
+
+def test_gui_survives_a_worker_failure_during_the_error_dialog() -> None:
+    """The reported crash: the modal pumps the loop, the QThread dies mid-cleanup."""
+    pytest.importorskip("PySide6")
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QThread
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    assert app is not None
+
+    thread = QThread()
+    thread.start()
+
+    class _Window:
+        _thread = thread
+        _worker = None
+
+    from arenatalk.game.window import GameWindow
+
+    cleanup = GameWindow._cleanup_thread
+    cleanup(_Window)                       # first pass stops and schedules delete
+    assert _Window._thread is None
+    for _ in range(20):
+        app.processEvents()                # what the modal dialog does
+
+    _Window._thread = thread               # a stale reference to a dead object
+    cleanup(_Window)                       # must not raise RuntimeError
+    assert _Window._thread is None

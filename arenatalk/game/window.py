@@ -993,6 +993,19 @@ class GameWindow(QMainWindow):
         if actor2 and actor2.win_odds > 0:
             odds_note = f" · 승률 {actor2.win_odds:.0%}"
         self.scene.set_status(f"[{phase_l}] {name} ({role_l}){odds_note}")
+        if is_lounge:
+            # Prefetched audience votes all land at once. Twelve full speeches
+            # dumped into the log is exactly the wall of text the user was
+            # waiting through before — one line each is the point.
+            colour = {"찬성": "#4ade80", "반대": "#f87171"}.get(recommendation, "#94a3b8")
+            self._append_log(
+                f"<div style='margin:1px 0 1px 10px;color:#94a3b8'>"
+                f"🪑 {self._esc(name)} · "
+                f"<span style='color:{colour};font-weight:600'>"
+                f"{self._esc(recommendation or '중립')}</span>"
+                f" <span style='color:#64748b'>{float(confidence):.0%}</span></div>"
+            )
+            return
         body = speech.strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         body = body.replace("\n", "<br>")
         rec_html = ""
@@ -1051,19 +1064,6 @@ class GameWindow(QMainWindow):
         )
         self.progress_label.setText(f"종료 · 승자 {winner}")
         self.scene.set_status("토론 종료 — 결과 확인 중…")
-        if is_lounge:
-            # Prefetched audience votes all land at once. Twelve full speeches
-            # dumped into the log is exactly the wall of text the user was
-            # waiting through before — one line each is the point.
-            colour = {"찬성": "#4ade80", "반대": "#f87171"}.get(recommendation, "#94a3b8")
-            self._append_log(
-                f"<div style='margin:1px 0 1px 10px;color:#94a3b8'>"
-                f"🪑 {self._esc(name)} · "
-                f"<span style='color:{colour};font-weight:600'>"
-                f"{self._esc(recommendation or '중립')}</span>"
-                f" <span style='color:#64748b'>{float(confidence):.0%}</span></div>"
-            )
-            return
         if conclusion:
             body = self._esc(conclusion).replace("\n", "<br>")
             self._append_log(
@@ -1170,10 +1170,12 @@ class GameWindow(QMainWindow):
         self.scene.set_status(f"오류: {message}")
         self.progress_label.setText(f"오류 — {message[:80]}")
         self._append_log(f"<span style='color:#f87171'>오류</span> {message}")
-        QMessageBox.critical(self, "ArenaTalk", message)
+        # Tear down before showing the dialog, never after: a modal box runs a
+        # nested event loop, which is exactly when Qt's deferred deletes fire.
         self._cleanup_thread()
         self._stop_replay()
         self._set_idle()
+        QMessageBox.critical(self, "ArenaTalk", message)
 
     @staticmethod
     def _esc(text: str) -> str:
@@ -1228,13 +1230,13 @@ class GameWindow(QMainWindow):
     def _set_idle(self) -> None:
         self._busy = False
         self._replaying = False
-        self.start_btn.setEnabled(True)
-        self.replay_btn.setEnabled(True)
         # One expert cast per press: the next debate goes back to interest
         # scoring unless the tab is used again.
         self._forced_cast = None
         self._forced_domain = ""
         self.expert_panel.set_busy(False)
+        self.start_btn.setEnabled(True)
+        self.replay_btn.setEnabled(True)
         self.stop_replay_btn.setEnabled(False)
         self.stop_debate_btn.setEnabled(False)
         self.inject_btn.setEnabled(False)
@@ -1495,11 +1497,17 @@ class GameWindow(QMainWindow):
         self._worker = None
         if thread is None:
             return
-        if thread.isRunning():
-            thread.quit()
-            if not thread.wait(5000):
-                thread.terminate()
-                thread.wait(2000)
+        try:
+            if thread.isRunning():
+                thread.quit()
+                if not thread.wait(5000):
+                    thread.terminate()
+                    thread.wait(2000)
+            thread.deleteLater()
+        except RuntimeError:
+            # Qt already destroyed the C++ object. Nothing left to stop, and
+            # raising here would take the whole app down over bookkeeping.
+            pass
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._stop_replay()
