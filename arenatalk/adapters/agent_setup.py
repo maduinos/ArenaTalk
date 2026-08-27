@@ -120,6 +120,8 @@ def _install_npm(logical: str, package: str) -> tuple[bool, str]:
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=INSTALL_TIMEOUT,
         env=env,
     )
@@ -148,6 +150,8 @@ def _install_script(logical: str) -> tuple[bool, str]:
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=INSTALL_TIMEOUT,
                 env=env,
             )
@@ -173,6 +177,8 @@ def _pull_ollama_model() -> None:
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=INSTALL_TIMEOUT,
     )
 

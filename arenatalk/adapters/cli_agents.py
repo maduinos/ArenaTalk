@@ -322,6 +322,10 @@ def _run(cmd: list[str], cwd: str | None = None, *, timeout: int = 600) -> subpr
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            # Agent CLIs emit UTF-8; without this Windows decodes with the
+            # locale codec (cp949 on Korean installs) and mangles every reply.
+            encoding="utf-8",
+            errors="replace",
             cwd=cwd,
         )
     except OSError as exc:
@@ -354,6 +358,8 @@ def _probe_version(binary: str) -> str:
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=8,
             )
         except (OSError, subprocess.TimeoutExpired):

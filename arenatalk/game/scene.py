@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from arenatalk.resources import UI_FONT_FAMILY
 from arenatalk.game.sprites import (
     FRAME_HEIGHT,
     FRAME_WIDTH,
@@ -813,7 +814,7 @@ class ArenaScene(QWidget):
         p.setPen(QPen(QColor(148, 163, 184, 40), 1))
         p.drawRoundedRect(lounge.adjusted(1, 1, -1, -1), 15, 15)
         p.setPen(QColor("#94a3b8"))
-        p.setFont(QFont("Sans", 10, QFont.Weight.DemiBold))
+        p.setFont(QFont(UI_FONT_FAMILY, 10, QFont.Weight.DemiBold))
         n_vol = len(self._volunteer_order)
         lounge_title = f"대기실  ·  {len(self._actors)}명"
         if n_vol:
@@ -829,7 +830,7 @@ class ArenaScene(QWidget):
             lounge_title,
         )
         p.setPen(QColor("#64748b"))
-        p.setFont(QFont("Sans", 8))
+        p.setFont(QFont(UI_FONT_FAMILY, 8))
         p.drawText(
             int(lounge.x() + 16),
             int(lounge.y() + 38),
@@ -852,10 +853,10 @@ class ArenaScene(QWidget):
         p.drawRoundedRect(r, 20, 20)
 
         p.setPen(QColor("#fbbf24"))
-        p.setFont(QFont("Sans", 14, QFont.Weight.Bold))
+        p.setFont(QFont(UI_FONT_FAMILY, 14, QFont.Weight.Bold))
         p.drawText(int(r.x() + 22), int(r.y() + 32), "토론장")
         p.setPen(QColor("#64748b"))
-        p.setFont(QFont("Sans", 9))
+        p.setFont(QFont(UI_FONT_FAMILY, 9))
         p.drawText(int(r.x() + 92), int(r.y() + 30), "DEBATE ARENA")
 
         for i, pt in enumerate(self._podiums):
@@ -865,7 +866,7 @@ class ArenaScene(QWidget):
             p.setBrush(QColor(71, 85, 105, 160))
             p.drawRoundedRect(podium, 6, 6)
             p.setPen(QColor("#94a3b8"))
-            p.setFont(QFont("Sans", 7, QFont.Weight.Bold))
+            p.setFont(QFont(UI_FONT_FAMILY, 7, QFont.Weight.Bold))
             p.drawText(podium, Qt.AlignmentFlag.AlignCenter, str(i + 1))
 
     def _draw_header(self, p: QPainter) -> None:
@@ -877,16 +878,16 @@ class ArenaScene(QWidget):
         p.drawRoundedRect(bar, 12, 12)
 
         p.setPen(QColor("#f8fafc"))
-        p.setFont(QFont("Sans", 14, QFont.Weight.Bold))
+        p.setFont(QFont(UI_FONT_FAMILY, 14, QFont.Weight.Bold))
         p.drawText(28, 38, "ArenaTalk")
         title_advance = p.fontMetrics().horizontalAdvance("ArenaTalk")
         p.setPen(QColor("#94a3b8"))
-        p.setFont(QFont("Sans", 10, QFont.Weight.DemiBold))
+        p.setFont(QFont(UI_FONT_FAMILY, 10, QFont.Weight.DemiBold))
         version_text = f"v{__version__}"
         p.drawText(28 + title_advance + 10, 37, version_text)
         ver_w = p.fontMetrics().horizontalAdvance(version_text)
         p.setPen(QColor("#64748b"))
-        p.setFont(QFont("Sans", 10))
+        p.setFont(QFont(UI_FONT_FAMILY, 10))
         p.drawText(28 + title_advance + 10 + ver_w + 12, 37, "캐릭터 토론 시뮬레이터")
 
         if self._topic:
@@ -898,7 +899,7 @@ class ArenaScene(QWidget):
                 p.setBrush(QColor("#1e293b"))
                 p.drawRoundedRect(chip, 8, 8)
                 p.setPen(QColor("#93c5fd"))
-                p.setFont(QFont("Sans", 10))
+                p.setFont(QFont(UI_FONT_FAMILY, 10))
                 topic = self._topic if len(self._topic) <= 48 else self._topic[:45] + "…"
                 p.drawText(int(chip.x() + 12), int(chip.y() + 18), f"주제  {topic}")
 
@@ -909,7 +910,7 @@ class ArenaScene(QWidget):
             badge = QRectF(self.width() - 162, 18, 136, 28)
             p.drawRoundedRect(badge, 8, 8)
             p.setPen(QColor("#0f172a"))
-            p.setFont(QFont("Sans", 10, QFont.Weight.Bold))
+            p.setFont(QFont(UI_FONT_FAMILY, 10, QFont.Weight.Bold))
             p.drawText(badge, Qt.AlignmentFlag.AlignCenter, label)
         elif self._phase == "result" or (self._phase == "returning" and self._result_lines):
             p.setPen(Qt.PenStyle.NoPen)
@@ -917,7 +918,7 @@ class ArenaScene(QWidget):
             badge = QRectF(self.width() - 162, 18, 136, 28)
             p.drawRoundedRect(badge, 8, 8)
             p.setPen(QColor("#0f172a"))
-            p.setFont(QFont("Sans", 10, QFont.Weight.Bold))
+            p.setFont(QFont(UI_FONT_FAMILY, 10, QFont.Weight.Bold))
             label = "자리 복귀" if self._phase == "returning" else "최종 결과"
             p.drawText(badge, Qt.AlignmentFlag.AlignCenter, label)
         elif self._phase == "returning":
@@ -926,7 +927,7 @@ class ArenaScene(QWidget):
             badge = QRectF(self.width() - 162, 18, 136, 28)
             p.drawRoundedRect(badge, 8, 8)
             p.setPen(QColor("#0f172a"))
-            p.setFont(QFont("Sans", 10, QFont.Weight.Bold))
+            p.setFont(QFont(UI_FONT_FAMILY, 10, QFont.Weight.Bold))
             p.drawText(badge, Qt.AlignmentFlag.AlignCenter, "자리 복귀")
 
     def _draw_footer(self, p: QPainter) -> None:
@@ -935,7 +936,7 @@ class ArenaScene(QWidget):
         p.setBrush(QColor(15, 23, 42, 200))
         p.drawRoundedRect(bar, 10, 10)
         status = self._status
-        p.setFont(QFont("Sans", 10))
+        p.setFont(QFont(UI_FONT_FAMILY, 10))
         fm = p.fontMetrics()
         max_w = max(80, int(bar.width()) - 24)
         if fm.horizontalAdvance(status) > max_w:
@@ -963,7 +964,7 @@ class ArenaScene(QWidget):
         conclusion = (self._result_conclusion or "").strip()
         concl_lines = conclusion.splitlines() if conclusion else []
         # Estimate conclusion block height
-        concl_font = QFont("Sans", 10)
+        concl_font = QFont(UI_FONT_FAMILY, 10)
         p.setFont(concl_font)
         fm = p.fontMetrics()
         text_w = max_w - pad_x * 2
@@ -1021,7 +1022,7 @@ class ArenaScene(QWidget):
         p.drawRoundedRect(QRectF(bx, by, bw, bh), 16, 16)
 
         p.setPen(QColor("#6ee7b7"))
-        p.setFont(QFont("Sans", 13, QFont.Weight.Bold))
+        p.setFont(QFont(UI_FONT_FAMILY, 13, QFont.Weight.Bold))
         p.drawText(int(bx + pad_x), int(by + pad_y + 16), "최종 결과")
 
         colors = [
@@ -1031,7 +1032,7 @@ class ArenaScene(QWidget):
             QColor("#f472b6"),
             QColor("#34d399"),
         ]
-        label_font = QFont("Sans", 10)
+        label_font = QFont(UI_FONT_FAMILY, 10)
         y = by + pad_y + title_h + 4
         bar_left = bx + pad_x + 72
         bar_right = bx + bw - pad_x - 52
@@ -1054,7 +1055,7 @@ class ArenaScene(QWidget):
                 p.setBrush(grad)
                 p.drawRoundedRect(fill, 8, 8)
             p.setPen(QColor("#f8fafc"))
-            p.setFont(QFont("Sans", 10, QFont.Weight.DemiBold))
+            p.setFont(QFont(UI_FONT_FAMILY, 10, QFont.Weight.DemiBold))
             p.drawText(int(bar_right + 8), int(y + 12), f"{frac:.0%}")
             y += bar_h + bar_gap
 
@@ -1062,10 +1063,10 @@ class ArenaScene(QWidget):
         if wrapped:
             y += 4
             p.setPen(QColor("#94a3b8"))
-            p.setFont(QFont("Sans", 9, QFont.Weight.DemiBold))
+            p.setFont(QFont(UI_FONT_FAMILY, 9, QFont.Weight.DemiBold))
             p.drawText(int(bx + pad_x), int(y + 10), "합의 결론")
             y += 16
-            p.setFont(QFont("Sans", 10))
+            p.setFont(QFont(UI_FONT_FAMILY, 10))
             line_h = p.fontMetrics().height() + 3
             bottom_limit = by + bh - pad_y - meta_h
             for line in wrapped:
@@ -1077,11 +1078,11 @@ class ArenaScene(QWidget):
 
         # Meta footer
         p.setPen(QColor("#94a3b8"))
-        p.setFont(QFont("Sans", 10))
+        p.setFont(QFont(UI_FONT_FAMILY, 10))
         meta_y = by + bh - pad_y - 26
         p.drawText(int(bx + pad_x), int(meta_y), f"합의 확률  {self._result_consensus:.0%}")
         p.setPen(QColor("#fbbf24"))
-        p.setFont(QFont("Sans", 11, QFont.Weight.Bold))
+        p.setFont(QFont(UI_FONT_FAMILY, 11, QFont.Weight.Bold))
         winner = self._result_winner_label or "무승부"
         p.drawText(int(bx + pad_x), int(meta_y + 18), f"승자  {winner}")
 
@@ -1129,7 +1130,7 @@ class ArenaScene(QWidget):
         gap = 5
         stack_y = actor.position.y() + 6
         name = actor.display_name[:14]
-        p.setFont(QFont("Sans", 8, QFont.Weight.Bold))
+        p.setFont(QFont(UI_FONT_FAMILY, 8, QFont.Weight.Bold))
         fm = p.fontMetrics()
         nw = max(fm.horizontalAdvance(name) + 12, 48)
         name_h = 16
@@ -1150,7 +1151,7 @@ class ArenaScene(QWidget):
             except ValueError:
                 seat = 0
             tag = f"우선 #{seat}" if seat else "우선"
-            p.setFont(QFont("Sans", 8, QFont.Weight.Bold))
+            p.setFont(QFont(UI_FONT_FAMILY, 8, QFont.Weight.Bold))
             tfm = p.fontMetrics()
             tw = tfm.horizontalAdvance(tag) + 12
             th = 15
@@ -1179,7 +1180,7 @@ class ArenaScene(QWidget):
                     >= max((o.win_odds for o in self._actors if o.selected), default=0.0)
                     - 1e-9
                 )
-                p.setFont(QFont("Sans", 8, QFont.Weight.Bold))
+                p.setFont(QFont(UI_FONT_FAMILY, 8, QFont.Weight.Bold))
                 mfm = p.fontMetrics()
                 mw = mfm.horizontalAdvance(meta) + 14
                 mh = 16
@@ -1206,7 +1207,7 @@ class ArenaScene(QWidget):
             )
             if actor.stance_label:
                 chip = f"{actor.stance_label[:2]} · {chip}"
-            p.setFont(QFont("Sans", 7, QFont.Weight.Bold))
+            p.setFont(QFont(UI_FONT_FAMILY, 7, QFont.Weight.Bold))
             cfm = p.fontMetrics()
             cw = min(cfm.horizontalAdvance(chip) + 10, 110)
             ch = 14
@@ -1254,7 +1255,7 @@ class ArenaScene(QWidget):
 
 
     def _draw_move_chip(self, p: QPainter, cx: float, top: float, text: str) -> None:
-        font = QFont("Sans", 8, QFont.Weight.Bold)
+        font = QFont(UI_FONT_FAMILY, 8, QFont.Weight.Bold)
         p.setFont(font)
         fm = p.fontMetrics()
         pad_x, pad_y = 8, 4
@@ -1272,7 +1273,7 @@ class ArenaScene(QWidget):
         """Small centered chip above the head (thinking / status)."""
         dots = "." * (1 + int(self._clock * 2.2) % 3)
         display = f"{text}{dots}"
-        font = QFont("Sans", 8, QFont.Weight.DemiBold)
+        font = QFont(UI_FONT_FAMILY, 8, QFont.Weight.DemiBold)
         p.setFont(font)
         fm = p.fontMetrics()
         pad_x, pad_y = 8, 3
@@ -1305,8 +1306,8 @@ class ArenaScene(QWidget):
             return
 
         arena = self._arena
-        font = QFont("Sans", 11)
-        name_font = QFont("Sans", 9, QFont.Weight.DemiBold)
+        font = QFont(UI_FONT_FAMILY, 11)
+        name_font = QFont(UI_FONT_FAMILY, 9, QFont.Weight.DemiBold)
         p.setFont(font)
         fm = p.fontMetrics()
         pad_x, pad_y = 18, 14
@@ -1393,7 +1394,7 @@ class ArenaScene(QWidget):
         p.setBrush(QColor("#ffffff"))
         p.drawRoundedRect(panel, 12, 12)
         p.setPen(QColor("#0f172a"))
-        font = QFont("Sans", 10)
+        font = QFont(UI_FONT_FAMILY, 10)
         p.setFont(font)
         text_rect = QRectF(panel.x() + 14, panel.y() + 14, panel.width() - 28, panel.height() - 28)
         p.drawText(

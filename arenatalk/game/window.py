@@ -35,7 +35,9 @@ from arenatalk.interest import pick_top
 from arenatalk.logs import DebateLogStore, match_result_from_dict, topic_title
 from arenatalk.lounge import interest_with_profile
 from arenatalk.models import MatchResult, StanceBallot
+from arenatalk import __version__
 from arenatalk.ranking import RankingStore, live_win_probs
+from arenatalk.resources import UI_FONT_FAMILY, UI_FONT_STACK
 from arenatalk.topic_frame import frame_topic
 
 DEFAULT_DB = Path.home() / ".local/share/arenatalk/rankings.db"
@@ -44,7 +46,7 @@ STYLE = """
 QMainWindow, QWidget#Root {
   background: #0b1220;
   color: #e2e8f0;
-  font-family: "Noto Sans CJK KR", "Noto Sans KR", "Noto Sans", Sans-Serif;
+  font-family: __UI_FONT_STACK__;
 }
 QFrame#SidePanel {
   background: #0f172a;
@@ -173,10 +175,13 @@ QComboBox#SpeedBox, QComboBox#HistoryBox {
 }
 """
 
+STYLE = STYLE.replace("__UI_FONT_STACK__", UI_FONT_STACK)
+
+
 class GameWindow(QMainWindow):
     def __init__(self, characters_root: Path | None = None) -> None:
         super().__init__()
-        self.setWindowTitle("ArenaTalk v0.0.2 — CharacterPet Arena")
+        self.setWindowTitle(f"ArenaTalk v{__version__} — CharacterPet Arena")
         self.resize(1580, 920)
         self.setStyleSheet(STYLE)
 
@@ -1366,7 +1371,7 @@ def run_game(characters_root: Path | None = None) -> int:
     if icon_file is not None:
         icon = QIcon(str(icon_file))
         app.setWindowIcon(icon)
-    app.setFont(QFont("Sans", 10))
+    app.setFont(QFont(UI_FONT_FAMILY, 10))
     window = GameWindow(characters_root)
     if icon_file is not None:
         window.setWindowIcon(QIcon(str(icon_file)))
