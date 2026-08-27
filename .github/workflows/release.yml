@@ -47,6 +47,7 @@ jobs:
   windows:
     name: exe (windows-latest)
     runs-on: windows-latest
+    timeout-minutes: 25
     env:
       PYTHONIOENCODING: utf-8
     steps:
@@ -70,19 +71,22 @@ jobs:
           # The exe is GUI-subsystem, so PowerShell would return without
           # waiting on a bare call. Start-Process -Wait gives a real exit code,
           # and redirecting stdout hands the child a valid handle to print to.
-          function Run-Exe([string[]]$Args, [int[]]$Ok) {
-            $p = Start-Process -FilePath .\dist\arenatalk.exe -ArgumentList $Args `
+          # NB: do not name the parameter $Args — it is a PowerShell automatic
+          # variable, and shadowing it drops the arguments. A bare launch means
+          # "open the GUI", so -Wait would then hang until the job times out.
+          function Run-Exe([string[]]$ExeArgs, [int[]]$Ok) {
+            $p = Start-Process -FilePath .\dist\arenatalk.exe -ArgumentList $ExeArgs `
                    -Wait -PassThru -NoNewWindow `
                    -RedirectStandardOutput out.txt -RedirectStandardError err.txt
-            Write-Host "$ arenatalk $($Args -join ' ') -> $($p.ExitCode)"
+            Write-Host "$ arenatalk $($ExeArgs -join ' ') -> $($p.ExitCode)"
             Get-Content out.txt, err.txt -ErrorAction SilentlyContinue
             if ($Ok -notcontains $p.ExitCode) {
               throw "unexpected exit $($p.ExitCode)"
             }
           }
-          Run-Exe @('--help') @(0)
+          Run-Exe -ExeArgs @('--help') -Ok @(0)
           # `backends` exits 1 with no agent CLI installed — normal on a runner.
-          Run-Exe @('backends') @(0, 1)
+          Run-Exe -ExeArgs @('backends') -Ok @(0, 1)
 
       - name: Name the artifact after the version
         shell: pwsh
