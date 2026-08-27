@@ -21,6 +21,22 @@ arenatalk characters root --set ~/path/to/CharacterPet/characters
 
 우선순위: `--characters` → `ARENATALK_CHARACTERS` → AgentPet `characters.path` → XDG 기본.
 
+## 전문가 토론
+
+주제와 관심사가 같은 단어를 쓰지 않으면 관심도 캐스팅이 무너집니다. "주식"으로
+물으면 그 단어를 안 쓰는 캐릭터가 전부 바닥 점수로 동점이 돼서 출전이 사실상
+무작위가 됩니다. GUI 오른쪽 **「전문가」 탭**은 다른 질문을 합니다 — 이미 그
+분야 어휘를 가진 캐릭터가 누구인가.
+
+분야를 고르면 점수 순으로 정렬되고 전문가가 미리 체크됩니다. 체크는 손으로
+바꿀 수 있고, 「이 인원으로 토론 시작」을 누르면 그 인원만 출전합니다.
+
+```bash
+arenatalk experts                      # 분야 목록
+arenatalk experts '주식·투자·경제'      # 이 분야 순위
+arenatalk debate '주식 비중을 늘려야 하나' --domain '주식·투자·경제'
+```
+
 ## 에이전트 CLI (필수)
 
 ArenaTalk은 설치된 에이전트 CLI를 불러 캐릭터를 말하게 합니다. **설치만으로는
@@ -71,6 +87,7 @@ arenatalk list
 arenatalk debate '주제' --backend mock
 arenatalk setup
 arenatalk login --status
+arenatalk experts
 ```
 
 ## 개발

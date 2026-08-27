@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -30,6 +31,7 @@ from arenatalk.adapters.factory import build_backend
 from arenatalk.characters import active_character_root, load_characters
 from arenatalk.game.scene import PHASE_LABELS, ROLE_LABELS, ArenaScene
 from arenatalk.game.sprites import load_sprite_character
+from arenatalk.game.expert_panel import ExpertPanel
 from arenatalk.game.worker import start_debate_thread
 from arenatalk.interest import pick_top
 from arenatalk.logs import DebateLogStore, match_result_from_dict, topic_title
@@ -198,6 +200,8 @@ class GameWindow(QMainWindow):
         self._pending_backend = None
         self._pending_topic = ""
         self._busy = False
+        self._forced_cast: list[str] | None = None
+        self._forced_domain = ""
         self._session = 0
         self._recent_cast: list[str] = []
         self._replay_timer: QTimer | None = None
@@ -299,7 +303,7 @@ class GameWindow(QMainWindow):
         side_layout.addWidget(self.history_box)
 
         log_row = QHBoxLayout()
-        log_title = QLabel("토론 로그")
+        log_title = QLabel("토론")
         log_title.setObjectName("SideTitle")
         log_row.addWidget(log_title)
         log_row.addStretch(1)
@@ -308,11 +312,21 @@ class GameWindow(QMainWindow):
         self.open_logs_btn.clicked.connect(self._open_log_dir)
         log_row.addWidget(self.open_logs_btn)
         side_layout.addLayout(log_row)
+
         self.transcript = QTextEdit()
         self.transcript.setObjectName("Transcript")
         self.transcript.setReadOnly(True)
         self.transcript.setMinimumHeight(280)
-        side_layout.addWidget(self.transcript, stretch=5)
+
+        # Two ways to cast: let interest decide (the log tab, unchanged), or
+        # pick the field's specialists yourself.
+        self.side_tabs = QTabWidget()
+        self.side_tabs.addTab(self.transcript, "토론 로그")
+        self.expert_panel = ExpertPanel()
+        self.expert_panel.start_requested.connect(self._start_expert_match)
+        self.side_tabs.addTab(self.expert_panel, "전문가")
+        side_layout.addWidget(self.side_tabs, stretch=5)
+        self.expert_panel.set_roster(self._roster)
 
         rank_row = QHBoxLayout()
         rank_title = QLabel("Elo 랭킹")
@@ -507,6 +521,7 @@ class GameWindow(QMainWindow):
                 sprites.append(sp)
         self.scene.reload_sprites(sprites)
         self._apply_lounge_labels()
+        self.expert_panel.set_roster(self._roster)
         self.chars_root_label.setText(str(root))
         self.chars_root_label.setToolTip(str(root))
         self._refresh_ranks()
@@ -649,17 +664,34 @@ class GameWindow(QMainWindow):
         self.transcript.append(html)
         self.transcript.moveCursor(QTextCursor.MoveOperation.End)
 
+    def _start_expert_match(self, character_ids: list[str]) -> None:
+        """Run the next debate with exactly these specialists."""
+        if self._busy:
+            return
+        if not self.topic_input.text().strip():
+            QMessageBox.information(
+                self, "ArenaTalk", "먼저 위에 토론 주제를 입력하세요."
+            )
+            self.topic_input.setFocus()
+            return
+        self._forced_cast = list(character_ids)
+        self._forced_domain = self.expert_panel.domain
+        self.side_tabs.setCurrentWidget(self.transcript)
+        self._start_match()
+
     def _start_match(self) -> None:
         if self._busy:
             return
         topic = self.topic_input.text().strip()
         if not topic:
+            self._forced_cast = None
             return
         if len(self._roster) < 2:
             QMessageBox.warning(self, "ArenaTalk", "페르소나가 있는 캐릭이 2명 이상 필요합니다.")
             return
 
         self._busy = True
+        self.expert_panel.set_busy(True)
         self.start_btn.setEnabled(False)
         self.replay_btn.setEnabled(False)
         self.stop_replay_btn.setEnabled(False)
@@ -711,14 +743,25 @@ class GameWindow(QMainWindow):
         recent = set(self._recent_cast[-6:])
         priority = self.scene.volunteered_ids()
         profiles = {c.id: self._store.get_lounge_profile(c.id) for c in self._roster}
-        picked = pick_top(
-            topic,
-            self._roster,
-            k=3,
-            recent_ids=recent,
-            priority_ids=priority,
-            score_fn=lambda c: interest_with_profile(topic, c, profiles.get(c.id)),
-        )
+        forced = getattr(self, "_forced_cast", None)
+        if forced:
+            # The expert tab already decided who is qualified; interest scoring
+            # would only re-litigate it with the wrong question.
+            by_id = {c.id: c for c in self._roster}
+            chosen = [by_id[cid] for cid in forced if cid in by_id]
+            picked = [
+                (c, interest_with_profile(topic, c, profiles.get(c.id)))
+                for c in chosen
+            ]
+        else:
+            picked = pick_top(
+                topic,
+                self._roster,
+                k=3,
+                recent_ids=recent,
+                priority_ids=priority,
+                score_fn=lambda c: interest_with_profile(topic, c, profiles.get(c.id)),
+            )
         cast_chars = [c for c, _ in picked]
         cast_ids = [c.id for c in cast_chars]
         self._pending_cast = cast_ids
@@ -755,11 +798,22 @@ class GameWindow(QMainWindow):
                 f"<span style='color:#94a3b8'>모델</span> {profile_label}"
             )
 
+        expert_scores: dict[str, float] = {}
+        if forced:
+            from arenatalk.expertise import expert_score
+
+            expert_scores = {
+                c.id: expert_score(c, self._forced_domain).score for c, _ in picked
+            }
+
         cast_bits = []
         for c, score in picked:
             via = providers.get(c.id, self.backend_box.currentData())
             force = c.id in priority_set
-            if force:
+            if forced:
+                # Interest is not why these three are here; say what is.
+                tag = f"{self._forced_domain} {expert_scores.get(c.id, 0.0):.2f}"
+            elif force:
                 tag = "우선지정"
             elif random_pick:
                 tag = f"랜덤 · 관심도 {score:.0%}"
@@ -779,7 +833,11 @@ class GameWindow(QMainWindow):
         self.scene.select_cast(cast_ids, providers)
         self.scene.set_win_odds(even)
         self.scene.move_cast_to_arena(cast_ids)
-        if priority_set:
+        if forced:
+            self.scene.set_status(
+                f"{self._forced_domain} 전문가 {len(cast_ids)}명 — 토론장으로 이동 중…"
+            )
+        elif priority_set:
             self.scene.set_status("우선 지정 + 관심도 — 토론장으로 이동 중…")
         elif random_pick:
             self.scene.set_status("관심도 동일 — 전체에서 랜덤 출전, 토론장으로 이동 중…")
@@ -1172,6 +1230,11 @@ class GameWindow(QMainWindow):
         self._replaying = False
         self.start_btn.setEnabled(True)
         self.replay_btn.setEnabled(True)
+        # One expert cast per press: the next debate goes back to interest
+        # scoring unless the tab is used again.
+        self._forced_cast = None
+        self._forced_domain = ""
+        self.expert_panel.set_busy(False)
         self.stop_replay_btn.setEnabled(False)
         self.stop_debate_btn.setEnabled(False)
         self.inject_btn.setEnabled(False)

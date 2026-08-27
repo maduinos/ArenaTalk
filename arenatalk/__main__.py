@@ -29,6 +29,7 @@ _CMDS = frozenset(
         "install",
         "characters",
         "login",
+        "experts",
     }
 )
 
@@ -353,6 +354,25 @@ def main(argv: list[str] | None = None) -> int:
         help="캐릭 발언을 한 명씩 직렬 실행",
     )
     p_debate.add_argument("--characters", type=Path, default=None)
+    p_debate.add_argument(
+        "--domain",
+        default=None,
+        help="이 분야 전문가만 출전 (예: '주식·투자·경제'). "
+        "목록은 arenatalk experts",
+    )
+    p_debate.add_argument(
+        "--experts",
+        type=int,
+        default=3,
+        help="--domain 사용 시 출전 인원 (기본 3)",
+    )
+
+    p_experts = sub.add_parser(
+        "experts",
+        help="분야별 전문가 순위 (GUI 「전문가」 탭과 같은 점수)",
+    )
+    p_experts.add_argument("domain", nargs="?", default=None, help="비우면 분야 목록")
+    p_experts.add_argument("--characters", type=Path, default=None)
 
     p_play = sub.add_parser("play", help="게임형 GUI (기본과 동일)")
     p_play.add_argument("--characters", type=Path, default=None)
@@ -463,6 +483,39 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "login":
         return _cmd_login(args.provider, status_only=args.status)
 
+    if args.cmd == "experts":
+        from arenatalk.expertise import domain_names, rank_experts
+
+        if not args.domain:
+            console.print("[bold]분야[/bold]")
+            for name in domain_names():
+                console.print(f"  • {name}")
+            console.print("\n[dim]arenatalk experts '주식·투자·경제'[/dim]")
+            return 0
+        chars = load_characters(args.characters)
+        ranked = rank_experts(chars, args.domain)
+        if not any(m.score for m in ranked):
+            console.print(f"[yellow]'{args.domain}' 분야를 찾지 못했습니다.[/yellow]")
+            console.print("[dim]arenatalk experts 로 분야 목록을 보세요.[/dim]")
+            return 1
+        table = Table(title=f"{args.domain} ({sum(m.is_expert for m in ranked)}명)")
+        table.add_column("#")
+        table.add_column("character")
+        table.add_column("전문 태그")
+        table.add_column("점수", justify="right")
+        for i, m in enumerate(ranked, 1):
+            if not m.score:
+                continue
+            name = m.character.display_name or m.character.id
+            table.add_row(
+                str(i),
+                f"[green]{name}[/green]" if m.is_expert else name,
+                m.tags or "-",
+                f"{m.score:.2f}",
+            )
+        console.print(table)
+        return 0
+
     if args.cmd == "install":
         return _cmd_install(
             with_agents=not args.no_agents,
@@ -533,11 +586,34 @@ def main(argv: list[str] | None = None) -> int:
         except (RuntimeError, ValueError) as exc:
             console.print(f"[red]백엔드 오류:[/red] {exc}")
             return 1
+        expert_cast = None
+        if args.domain:
+            from arenatalk.expertise import EXPERT_DOMAINS, suggest_experts
+
+            if args.domain not in EXPERT_DOMAINS:
+                console.print(f"[red]모르는 분야:[/red] {args.domain}")
+                console.print("[dim]arenatalk experts 로 목록을 보세요.[/dim]")
+                return 1
+            matches = suggest_experts(chars, args.domain, limit=max(2, args.experts))
+            expert_cast = [m.character for m in matches]
+            console.print(
+                f"[green]{args.domain} 전문가 {len(expert_cast)}명 출전:[/green] "
+                + ", ".join(
+                    f"{m.character.display_name or m.character.id}({m.score:.2f})"
+                    for m in matches
+                )
+            )
+            if not any(m.is_expert for m in matches):
+                console.print(
+                    "[yellow]이 분야 전문가가 없어 점수가 가장 가까운 캐릭으로 진행합니다.[/yellow]"
+                )
+
         result = run_debate(
             args.topic,
             chars,
             backend,  # type: ignore[arg-type]
             store,
+            cast=expert_cast,
             rounds=args.rounds,
             parallel=not args.no_parallel,
             research=True,
