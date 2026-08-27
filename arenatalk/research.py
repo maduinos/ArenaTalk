@@ -8,7 +8,9 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-USER_AGENT = "ArenaTalk/0.0.2 (local debate research; +https://localhost)"
+from arenatalk import __version__
+
+USER_AGENT = f"ArenaTalk/{__version__} (local debate research; +https://localhost)"
 TIMEOUT = 8.0
 
 DEFAULT_LOG_DIR = Path.home() / ".local/share/arenatalk/logs"

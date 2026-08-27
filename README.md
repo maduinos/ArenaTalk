@@ -26,7 +26,7 @@ arenatalk characters root --set ~/path/to/CharacterPet/characters
 일반 사용자는 PyInstaller one-folder를 담은 `.deb`를 설치합니다 (Python/venv 불필요).
 
 ```bash
-sudo apt install ./arenatalk_0.0.2_amd64.deb
+sudo apt install ./arenatalk_0.0.3_amd64.deb
 arenatalk characters root --set ~/path/to/CharacterPet/characters
 arenatalk
 ```
@@ -41,7 +41,7 @@ python3 -m venv .venv
 pip install -U pip
 pip install -e '.[gui,packaging,dev]'
 tools/build_ubuntu_deb.sh
-# → dist/ubuntu/arenatalk_0.0.2_amd64.deb
+# → dist/ubuntu/arenatalk_0.0.3_amd64.deb
 ```
 
 ## 소스에서 실행
