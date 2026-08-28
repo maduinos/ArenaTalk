@@ -11,8 +11,37 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from arenatalk.config import env_get
 from arenatalk.interest import interest_score
 from arenatalk.models import Character, StanceBallot
+
+_OFF_VALUES = {"0", "off", "false", "no", "n", "끄기", "꺼짐"}
+
+
+def lounge_vote_env() -> bool | None:
+    """``ARENATALK_LOUNGE`` as a decision, or None when it is not set.
+
+    Kept apart from the default so the GUI can tell "the user never said" from
+    "the user said yes": an env var set for this launch outranks the switch's
+    remembered position, an unset one leaves it alone.
+    """
+    raw = env_get("ARENATALK_LOUNGE")
+    if not raw:
+        return None
+    return raw.lower() not in _OFF_VALUES
+
+
+def lounge_vote_default() -> bool:
+    """Whether the waiting room polls unless a caller says otherwise.
+
+    The poll asks every character who is not on stage, so on a large roster it
+    is the single biggest consumer of CLI tokens in a run. ``ARENATALK_LOUNGE``
+    turns it off for a whole machine; the GUI switch and ``--no-lounge`` turn
+    it off for one debate.
+    """
+    env = lounge_vote_env()
+    return True if env is None else env
+
 
 LEARN_RATE = 0.08
 MAX_SIGNATURE = 5

@@ -16,6 +16,7 @@ from arenatalk.lounge import (
     audience_weight,
     build_lounge_system_prompt,
     interest_with_profile,
+    lounge_vote_default,
     pick_lounge_voters,
 )
 from arenatalk.models import Character, MatchResult, StanceBallot
@@ -60,7 +61,7 @@ def run_debate(
     materials: str = "",
     research: bool = True,
     apply_ranking: bool = True,
-    lounge_vote: bool = True,
+    lounge_vote: bool | None = None,
     lounge_prefetch: bool = True,
     should_cancel: Callable[[], bool] | None = None,
     live_materials: Callable[[], str] | None = None,
@@ -117,6 +118,8 @@ def run_debate(
         raise RuntimeError("need at least 2 characters with personas")
 
     lounge_voters: list[Character] = []
+    if lounge_vote is None:
+        lounge_vote = lounge_vote_default()
     if lounge_vote:
         lounge_voters = pick_lounge_voters(
             topic,
@@ -124,6 +127,11 @@ def run_debate(
             {c.id for c in cast},
             profiles=profiles,
         )
+    else:
+        # The poll asks every character off stage, so it is the run's biggest
+        # token cost on a large roster. Say so rather than leaving the missing
+        # 여론 line to look like a failure.
+        log("대기실 여론 조사 꺼짐 — 본선 발언만 진행합니다")
 
     assignment: dict[str, str] = {}
     if isinstance(backend, EnsembleBackend):

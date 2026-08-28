@@ -32,6 +32,7 @@ class DebateWorker(QObject):
         rounds: int = 2,
         recent_ids: set[str] | None = None,
         speech_hold_scale: float = 1.0,
+        lounge_vote: bool = True,
     ) -> None:
         super().__init__()
         self.topic = topic
@@ -42,6 +43,7 @@ class DebateWorker(QObject):
         self.rounds = rounds
         self.recent_ids = recent_ids or set()
         self.speech_hold_scale = speech_hold_scale
+        self.lounge_vote = lounge_vote
         self._cancel = False
         self._inject_lock = threading.Lock()
         self._injections: list[str] = []
@@ -91,6 +93,7 @@ class DebateWorker(QObject):
                 speech_hold_scale=self.speech_hold_scale,
                 recent_ids=self.recent_ids,
                 research=True,
+                lounge_vote=self.lounge_vote,
                 should_cancel=lambda: self._cancel,
                 live_materials=self._live_materials,
                 on_thinking=self._on_thinking,
@@ -135,6 +138,7 @@ def start_debate_thread(
     rounds: int = 2,
     recent_ids: set[str] | None = None,
     speech_hold_scale: float = 1.0,
+    lounge_vote: bool = True,
 ) -> tuple[QThread, DebateWorker]:
     thread = QThread()
     worker = DebateWorker(
@@ -146,6 +150,7 @@ def start_debate_thread(
         rounds=rounds,
         recent_ids=recent_ids,
         speech_hold_scale=speech_hold_scale,
+        lounge_vote=lounge_vote,
     )
     worker.moveToThread(thread)
     thread.started.connect(worker.run)

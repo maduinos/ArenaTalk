@@ -313,6 +313,61 @@ def test_lounge_prefetch_completes_the_progress_bar(tmp_path: Path) -> None:
     assert current == total, seen[-5:]
 
 
+def test_lounge_vote_off_makes_no_audience_calls(tmp_path: Path) -> None:
+    """The switch exists to save tokens, so it has to save the calls too."""
+    from arenatalk.engines.debate import run_debate
+
+    turns: list[str] = []
+    events: list[str] = []
+    result = run_debate(
+        "주제",
+        _lounge_roster(8),
+        MockBackend(think_seconds=0.0),
+        RankingStore(tmp_path / "off.db"),
+        rounds=1,
+        parallel=False,
+        research=False,
+        lounge_vote=False,
+        on_turn=lambda cid, role, speech, phase, rec, conf: turns.append(phase),
+        on_event=events.append,
+    )
+    assert "audience" not in turns
+    assert not result.audience_ballots
+    assert not result.audience_dist
+    assert result.winner_id or result.recommendation_dist, "debate itself must stand"
+    assert any("여론 조사 꺼짐" in e for e in events), events
+
+
+def test_lounge_vote_default_follows_the_env(monkeypatch) -> None:
+    from arenatalk.lounge import lounge_vote_default
+
+    monkeypatch.delenv("ARENATALK_LOUNGE", raising=False)
+    assert lounge_vote_default() is True
+    monkeypatch.setenv("ARENATALK_LOUNGE", "0")
+    assert lounge_vote_default() is False
+    monkeypatch.setenv("ARENATALK_LOUNGE", "off")
+    assert lounge_vote_default() is False
+    monkeypatch.setenv("ARENATALK_LOUNGE", "1")
+    assert lounge_vote_default() is True
+
+
+def test_lounge_vote_unset_defers_to_the_env(tmp_path: Path, monkeypatch) -> None:
+    """GUI and CLI pass None when the user has not said; the env decides then."""
+    from arenatalk.engines.debate import run_debate
+
+    monkeypatch.setenv("ARENATALK_LOUNGE", "0")
+    result = run_debate(
+        "주제",
+        _lounge_roster(8),
+        MockBackend(think_seconds=0.0),
+        RankingStore(tmp_path / "env.db"),
+        rounds=1,
+        parallel=False,
+        research=False,
+    )
+    assert not result.audience_ballots
+
+
 def test_cancel_during_lounge_prefetch_is_a_cancel(tmp_path: Path) -> None:
     """A stop must not surface as "the audience failed" and finish the debate."""
     from arenatalk.engines.debate import DebateCancelled, run_debate
@@ -466,6 +521,37 @@ def test_a_profile_with_only_junk_falls_back_to_temperament() -> None:
     assert "것이다" not in label and "상승할" not in label
     assert label  # temperament alone is still a useful chip
 
+
+
+def test_lounge_switch_is_remembered_across_restarts(tmp_path: Path, monkeypatch) -> None:
+    """A token budget is not per-run: turning the poll off has to stick."""
+    pytest.importorskip("PySide6")
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QSettings
+
+    from arenatalk.game import window as win
+
+    monkeypatch.delenv("ARENATALK_LOUNGE", raising=False)
+    QSettings.setPath(
+        QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path)
+    )
+    settings = win.app_settings()
+    settings.clear()
+    settings.sync()
+
+    assert win.stored_lounge_vote() is True, "first run polls"
+
+    settings.setValue(win.LOUNGE_VOTE_KEY, False)
+    settings.sync()
+    assert win.stored_lounge_vote() is False, "a saved 'off' survives the restart"
+
+    # The ini backend hands booleans back as strings; "false" must not read true.
+    assert win._stored_bool(win.app_settings(), win.LOUNGE_VOTE_KEY) is False
+
+    monkeypatch.setenv("ARENATALK_LOUNGE", "1")
+    assert win.stored_lounge_vote() is True, "this launch's env outranks the file"
 
 
 def test_lounge_votes_outlive_the_debate_that_produced_them() -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -35,7 +35,7 @@ from arenatalk.game.expert_panel import ExpertPanel
 from arenatalk.game.worker import start_debate_thread
 from arenatalk.interest import pick_top
 from arenatalk.logs import DebateLogStore, match_result_from_dict, topic_title
-from arenatalk.lounge import interest_with_profile
+from arenatalk.lounge import interest_with_profile, lounge_vote_env
 from arenatalk.models import MatchResult, StanceBallot
 from arenatalk import __version__
 from arenatalk.config import setup_stdio
@@ -44,6 +44,52 @@ from arenatalk.resources import UI_FONT_FAMILY, UI_FONT_STACK
 from arenatalk.topic_frame import frame_topic
 
 DEFAULT_DB = Path.home() / ".local/share/arenatalk/rankings.db"
+
+# Toolbar choices that outlive the process. The org/app names are passed
+# explicitly rather than inherited from QApplication, so a window built in a
+# test — where nobody set them — writes where the app does. IniFormat is also
+# explicit: NativeFormat would be the registry on Windows, which no user is
+# going to open to undo a setting, and which QSettings.setPath cannot redirect
+# to a temp dir in a test.
+SETTINGS_ORG = "maduinos"
+SETTINGS_APP = "ArenaTalk"
+LOUNGE_VOTE_KEY = "debate/lounge_vote"
+
+
+def app_settings() -> QSettings:
+    return QSettings(
+        QSettings.Format.IniFormat,
+        QSettings.Scope.UserScope,
+        SETTINGS_ORG,
+        SETTINGS_APP,
+    )
+
+
+def _stored_bool(settings: QSettings, key: str) -> bool | None:
+    """A remembered checkbox, or None if this machine has never set it.
+
+    The ini backend hands strings back, so "false" would otherwise be true.
+    """
+    raw = settings.value(key, None)
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def stored_lounge_vote() -> bool:
+    """The switch position the next debate starts from.
+
+    An env var set for this launch outranks the remembered position — it is the
+    more recent instruction, and it is how a headless or scripted run says no.
+    """
+    env = lounge_vote_env()
+    if env is not None:
+        return env
+    stored = _stored_bool(app_settings(), LOUNGE_VOTE_KEY)
+    return True if stored is None else stored
+
 
 STYLE = """
 QMainWindow, QWidget#Root {
@@ -209,6 +255,7 @@ class GameWindow(QMainWindow):
         self._replay_wait_ticks = 0
         self._last_result: MatchResult | None = None
         self._hold_scale = 1.0
+        self._lounge_vote = stored_lounge_vote()
         self._live_ballots: dict[str, StanceBallot] = {}
         self._live_cast_ids: list[str] = []
         self._replaying = False
@@ -400,6 +447,20 @@ class GameWindow(QMainWindow):
         self.speed_box.setToolTip("말풍선 유지 시간 (관전용)")
         bar.addWidget(self.speed_box)
 
+        self.lounge_box = QComboBox()
+        self.lounge_box.setObjectName("SpeedBox")
+        self.lounge_box.addItem("여론 · 켜기", True)
+        self.lounge_box.addItem("여론 · 끄기", False)
+        self.lounge_box.setCurrentIndex(0 if self._lounge_vote else 1)
+        self.lounge_box.setToolTip(
+            "대기실 여론 조사. 출전하지 않은 캐릭터 전원이 한 번씩 CLI를 부르므로\n"
+            "로스터가 크면 토큰을 가장 많이 쓰는 단계입니다.\n"
+            "끄면 본선 발언만 진행하고, 선택은 다음 실행에도 유지됩니다\n"
+            "(ARENATALK_LOUNGE=0 을 걸면 그 실행에서는 저장값보다 우선)."
+        )
+        self.lounge_box.currentIndexChanged.connect(self._remember_lounge_vote)
+        bar.addWidget(self.lounge_box)
+
         self.model_box = QComboBox()
         self.model_box.setObjectName("SpeedBox")
         self.model_box.addItem("모델 · CLI기본", "default")
@@ -446,6 +507,13 @@ class GameWindow(QMainWindow):
         self._refresh_ranks()
         self._refresh_history()
         QTimer.singleShot(400, self._nudge_agent_setup)
+
+    def _remember_lounge_vote(self) -> None:
+        """Keep the switch off across restarts — a token budget is not per-run."""
+        value = bool(self.lounge_box.currentData())
+        settings = app_settings()
+        settings.setValue(LOUNGE_VOTE_KEY, value)
+        settings.sync()
 
     def _populate_backend_box(self) -> None:
         previous = self.backend_box.currentData()
@@ -707,6 +775,7 @@ class GameWindow(QMainWindow):
         self._live_ballots = {}
         self._live_cast_ids = []
         self._hold_scale = float(self.speed_box.currentData() or 1.0)
+        self._lounge_vote = bool(self.lounge_box.currentData())
         frame = frame_topic(topic)
         if frame.kind == "recommend":
             self.progress_label.setText(
@@ -865,6 +934,7 @@ class GameWindow(QMainWindow):
             rounds=2,
             recent_ids=set(self._recent_cast[-6:]),
             speech_hold_scale=self._hold_scale,
+            lounge_vote=self._lounge_vote,
         )
         self._worker.thinking.connect(self._on_thinking)
         self._worker.turn.connect(self._on_turn)

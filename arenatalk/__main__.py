@@ -353,6 +353,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="캐릭 발언을 한 명씩 직렬 실행",
     )
+    p_debate.add_argument(
+        "--no-lounge",
+        action="store_true",
+        help="대기실 여론 조사 생략 (출전자 외 전원이 CLI를 한 번씩 부르므로 "
+        "토큰을 아끼려면 끄세요). 기본값은 ARENATALK_LOUNGE=0 으로도 바꿀 수 있습니다",
+    )
     p_debate.add_argument("--characters", type=Path, default=None)
     p_debate.add_argument(
         "--domain",
@@ -617,6 +623,7 @@ def main(argv: list[str] | None = None) -> int:
             rounds=args.rounds,
             parallel=not args.no_parallel,
             research=True,
+            lounge_vote=False if args.no_lounge else None,
             on_event=lambda m: console.print(f"[dim]{m}[/dim]"),
         )
 
