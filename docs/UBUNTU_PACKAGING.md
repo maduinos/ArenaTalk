@@ -18,7 +18,7 @@ pip install -e ".[gui,packaging,dev]"
 tools/build_ubuntu_deb.sh
 ```
 
-기본 출력은 `dist/ubuntu/arenatalk_0.0.5_amd64.deb`이다. 다른 경로는
+기본 출력은 `dist/ubuntu/arenatalk_0.0.6_amd64.deb`이다. 다른 경로는
 `tools/build_ubuntu_deb.sh --output-dir DIRECTORY`를 사용한다.
 
 패키지 구성:
@@ -35,15 +35,15 @@ tools/build_ubuntu_deb.sh
 ## 산출물 검사
 
 ```bash
-dpkg-deb --info dist/ubuntu/arenatalk_0.0.5_amd64.deb
-dpkg-deb --contents dist/ubuntu/arenatalk_0.0.5_amd64.deb
-sha256sum dist/ubuntu/arenatalk_0.0.5_amd64.deb
+dpkg-deb --info dist/ubuntu/arenatalk_0.0.6_amd64.deb
+dpkg-deb --contents dist/ubuntu/arenatalk_0.0.6_amd64.deb
+sha256sum dist/ubuntu/arenatalk_0.0.6_amd64.deb
 ```
 
 ## 설치와 첫 실행
 
 ```bash
-sudo apt install ./dist/ubuntu/arenatalk_0.0.5_amd64.deb
+sudo apt install ./dist/ubuntu/arenatalk_0.0.6_amd64.deb
 arenatalk characters root --set ~/path/to/CharacterPet/characters
 arenatalk
 ```
@@ -60,7 +60,7 @@ arenatalk
 APT repository가 없는 동안 새 `.deb`를 다시 설치한다.
 
 ```bash
-sudo apt install ./arenatalk_0.0.5_amd64.deb
+sudo apt install ./arenatalk_0.0.6_amd64.deb
 ```
 
 사용자 Elo DB(`~/.local/share/arenatalk/`)와 캐릭터 폴더 설정은 패키지 교체로

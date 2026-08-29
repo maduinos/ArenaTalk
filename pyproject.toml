@@ -1,6 +1,6 @@
 [project]
 name = "arenatalk"
-version = "0.0.5"
+version = "0.0.6"
 description = "ArenaTalk — CharacterPet debate arena with Elo ranking"
 requires-python = ">=3.10"
 dependencies = [
