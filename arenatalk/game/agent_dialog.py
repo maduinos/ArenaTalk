@@ -24,14 +24,16 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from arenatalk.adapters.agent_auth import login_guide
 from arenatalk.adapters.agent_setup import (
     EnsureResult,
     ensure_agent_clis,
+    install_hint,
     login_provider,
     plan_free_install,
     refresh_login_state,
 )
-from arenatalk.adapters.cli_agents import AUTH_LABELS, ProviderInfo
+from arenatalk.adapters.cli_agents import AUTH_LABELS, ProviderInfo, known_agents
 
 _TIER_LABELS = {"paid": "유료", "free": "무료", "": "-"}
 
@@ -77,6 +79,8 @@ class AgentSetupDialog(QDialog):
         self._providers: list[ProviderInfo] = list(setup.all_seen) if setup else []
         self._thread: QThread | None = None
         self._worker: _SetupWorker | None = None
+        # Filled by _render: the known CLIs shown as 미설치 rows, in row order.
+        self._missing_names: list[str] = []
 
         layout = QVBoxLayout(self)
 
@@ -151,7 +155,16 @@ class AgentSetupDialog(QDialog):
         providers = self._providers
         setup = self._setup
         chosen = {p.name for p in setup.providers} if setup else set()
-        self.table.setRowCount(len(providers))
+        # Discovery only sees what is on PATH, so a CLI the user does not have
+        # never appeared at all — not even as something they could install.
+        seen = {p.name for p in providers}
+        missing = [
+            (name, label, tier)
+            for name, label, tier in known_agents()
+            if name not in seen
+        ]
+        self._missing_names = [name for name, _, _ in missing]
+        self.table.setRowCount(len(providers) + len(missing))
         for row, info in enumerate(providers):
             state = AUTH_LABELS.get(info.auth, info.auth)
             if info.name in chosen:
@@ -160,19 +173,39 @@ class AgentSetupDialog(QDialog):
                 used = "직접 선택 시"
             else:
                 used = "-"
+            # "로그인 필요" on its own does not say what to type, and this is
+            # the most common reason a debate will not start.
+            if info.needs_login:
+                guidance = login_guide(info.name, info.binary)
+            else:
+                guidance = info.account or info.auth_detail or ""
             cells = [
                 info.display_name or info.name,
                 _TIER_LABELS.get(info.tier, info.tier or "-"),
                 info.version or "-",
                 state,
                 used,
-                info.account or info.auth_detail or "",
+                guidance,
             ]
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 if col == 3 and info.blocked:
                     item.setForeground(Qt.GlobalColor.red)
                 self.table.setItem(row, col, item)
+        for offset, (name, label, tier) in enumerate(missing):
+            cells = [
+                label,
+                _TIER_LABELS.get(tier, tier or "-"),
+                "-",
+                "미설치",
+                "-",
+                install_hint(name),
+            ]
+            for col, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                item.setForeground(Qt.GlobalColor.gray)
+                self.table.setItem(len(providers) + offset, col, item)
+
         self.table.resizeColumnsToContents()
         self.table.horizontalHeader().setSectionResizeMode(
             5, QHeaderView.ResizeMode.Stretch
@@ -306,6 +339,18 @@ class AgentSetupDialog(QDialog):
     def _login_selected(self) -> None:
         info = self._selected_provider()
         if info is None:
+            row = self.table.currentRow() - len(self._providers)
+            if 0 <= row < len(self._missing_names):
+                name = self._missing_names[row]
+                QMessageBox.information(
+                    self,
+                    "에이전트 설정",
+                    f"{name} 은(는) 아직 설치되지 않아 로그인할 수 없습니다.\n\n"
+                    f"설치: {install_hint(name)}\n"
+                    "또는 「무료 CLI 자동 설치」를 누르세요.\n\n"
+                    f"설치한 뒤 로그인: {login_guide(name)}",
+                )
+                return
             QMessageBox.information(self, "에이전트 설정", "먼저 목록에서 CLI를 고르세요.")
             return
         ok, message = login_provider(info)
@@ -318,6 +363,7 @@ class AgentSetupDialog(QDialog):
             "에이전트 설정",
             f"{info.display_name or info.name} 로그인 창을 열었습니다.\n\n"
             f"{message}\n\n"
+            f"직접 하려면: {login_guide(info.name, info.binary)}\n\n"
             "로그인을 마친 뒤 「다시 검사」를 누르면 상태가 갱신됩니다.",
         )
 

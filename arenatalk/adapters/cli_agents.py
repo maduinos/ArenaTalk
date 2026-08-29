@@ -185,6 +185,15 @@ _AGENT_CATALOG: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     ("ollama", ("ollama",), "Ollama", "free"),
 )
 
+def known_agents() -> tuple[tuple[str, str, str], ...]:
+    """Every agent CLI ArenaTalk can drive, as (name, display name, tier).
+
+    Discovery only reports what is on PATH, so without this the setup dialog
+    could not tell the user that a CLI they do not have is an option at all.
+    """
+    return tuple((name, label, tier) for name, _, label, tier in _AGENT_CATALOG)
+
+
 PAID_PROVIDER_NAMES: frozenset[str] = frozenset(
     name for name, _, _, tier in _AGENT_CATALOG if tier == "paid"
 )

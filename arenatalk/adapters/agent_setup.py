@@ -613,6 +613,19 @@ def _download_https(url: str, destination: Path, *, expect: bytes = b"ollama") -
     destination.chmod(0o700)
 
 
+def install_hint(name: str) -> str:
+    """What to run to get this CLI, for a row the dialog shows as 미설치."""
+    pkg = _NPM_PACKAGES.get(name)
+    if pkg:
+        return f"npm install -g {pkg}"
+    if name == "ollama":
+        where = "winget install Ollama.Ollama" if IS_WINDOWS else (
+            "brew install ollama" if IS_MACOS else "https://ollama.com/install.sh"
+        )
+        return f"{where} + ollama pull {_OLLAMA_MODEL}"
+    return "각 CLI 공식 설치 안내를 따르세요"
+
+
 # --- login passthrough ----------------------------------------------------
 
 
@@ -630,6 +643,7 @@ def refresh_login_state(providers: list[ProviderInfo]) -> list[ProviderInfo]:
 __all__ = [
     "EnsureResult",
     "FREE_INSTALL_ORDER",
+    "install_hint",
     "ensure_agent_clis",
     "login_provider",
     "preferred_providers",

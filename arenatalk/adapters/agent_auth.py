@@ -337,6 +337,22 @@ def login_command(provider: str, binary: str) -> list[str]:
     return [binary, *argv]
 
 
+# What to type when ArenaTalk cannot open a terminal, or when the user would
+# rather do it by hand. Kept beside LOGIN_HINTS so the two never drift.
+def login_guide(provider: str, binary: str = "") -> str:
+    """One line telling the user how to sign this CLI in.
+
+    The dialog shows it in the row itself: a CLI that is installed but signed
+    out is the single most common reason a debate will not start, and "로그인
+    필요" alone does not say what to type.
+    """
+    if provider == "ollama":
+        return LOGIN_HINTS["ollama"]
+    cmd = " ".join(login_command(provider, binary or provider))
+    hint = LOGIN_HINTS.get(provider, "")
+    return f"`{cmd}` 실행 — {hint}" if hint else f"`{cmd}` 실행"
+
+
 def launch_login(provider: str, binary: str) -> tuple[bool, str]:
     """Open a real terminal running this CLI's login flow.
 
