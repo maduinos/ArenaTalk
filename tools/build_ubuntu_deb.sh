@@ -112,6 +112,31 @@ PYINSTALLER_WORK="$BUILD_ROOT/pyinstaller-work"
 STAGE_ROOT="$BUILD_ROOT/package"
 BUNDLE_ROOT="$PYINSTALLER_DIST/arenatalk"
 
+# PyInstaller's Qt hooks find the plugins by importing PySide6 in this
+# interpreter and asking QLibraryInfo. When that import fails — a build host
+# without libglib-2.0.so.0 is enough — the hook collects nothing and raises
+# nothing: the build still reports success and the .deb ships with no platform
+# plugin. Fail here, where the cause is still visible.
+BUILD_PYTHON="$(dirname "$PYINSTALLER_BIN")/python3"
+[[ -x "$BUILD_PYTHON" ]] || BUILD_PYTHON="$(dirname "$PYINSTALLER_BIN")/python"
+if [[ -x "$BUILD_PYTHON" ]]; then
+    if ! "$BUILD_PYTHON" - <<'PYCHECK'
+import sys
+
+try:
+    from PySide6.QtCore import QLibraryInfo
+except Exception as exc:  # noqa: BLE001 - any import failure is fatal here
+    sys.exit(f"PySide6 does not import in the build environment: {exc}")
+if not QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath):
+    sys.exit("PySide6 reports an empty Qt plugins path.")
+PYCHECK
+    then
+        printf '%s\n' \
+            "Install the Qt runtime libraries this build host lacks (libglib2.0-0, libgl1, libegl1, libxkbcommon0, ...)." >&2
+        exit 1
+    fi
+fi
+
 printf 'Building ArenaTalk %s with %s...\n' "$VERSION" "$PYINSTALLER_BIN"
 "$PYINSTALLER_BIN" \
     --noconfirm \
@@ -133,6 +158,22 @@ backends_status=0
 "$BUNDLE_ROOT/arenatalk" backends >/dev/null || backends_status=$?
 if ((backends_status > 1)); then
     printf 'The frozen bundle failed to run `backends` (exit %s).\n' "$backends_status" >&2
+    exit 1
+fi
+
+# A bundle passes every CLI check above and can still be unusable: `--help` and
+# `backends` never construct a QApplication, so an absent platform plugin goes
+# unnoticed until the GUI aborts with "no Qt platform plugin could be
+# initialized" on the user's machine.
+platform_dir="$(find "$BUNDLE_ROOT" -type d -path '*plugins/platforms' | head -n 1)"
+if [[ -z "$platform_dir" || ! -r "$platform_dir/libqxcb.so" ]]; then
+    printf '%s\n' \
+        "The frozen bundle has no Qt xcb platform plugin; the GUI would not start." >&2
+    exit 1
+fi
+if ! find "$BUNDLE_ROOT" -name 'libQt6XcbQpa.so.*' | grep -q .; then
+    printf '%s\n' \
+        "The frozen bundle is missing libQt6XcbQpa; the xcb plugin would not load." >&2
     exit 1
 fi
 if [[ ! -r "$BUNDLE_ROOT/_internal/arenatalk/assets/icons/arenatalk.png" ]] \
