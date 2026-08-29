@@ -220,6 +220,7 @@ def test_run_debate_lounge_vote_mock(tmp_path: Path) -> None:
         research=False,
         parallel=True,
         speech_hold=False,
+        lounge_vote=True,
     )
     assert len(result.participants) == 3
     assert result.audience_ballots
@@ -263,6 +264,7 @@ def test_lounge_prefetch_matches_the_serial_result(tmp_path: Path) -> None:
             parallel=False,
             research=False,
             lounge_prefetch=prefetch,
+            lounge_vote=True,
         )
         out[prefetch] = result
     assert len(out[True].audience_ballots) == len(out[False].audience_ballots)
@@ -287,6 +289,7 @@ def test_lounge_prefetch_still_reports_every_vote(tmp_path: Path) -> None:
         lounge_prefetch=True,
         on_turn=lambda cid, role, speech, phase, rec, conf: turns.append((cid, phase)),
         on_event=events.append,
+        lounge_vote=True,
     )
     audience_turns = [cid for cid, phase in turns if phase == "audience"]
     assert len(audience_turns) == len(result.audience_ballots)
@@ -307,6 +310,7 @@ def test_lounge_prefetch_completes_the_progress_bar(tmp_path: Path) -> None:
         research=False,
         lounge_prefetch=True,
         on_progress=lambda cur, total, label: seen.append((cur, total)),
+        lounge_vote=True,
     )
     assert seen
     current, total = seen[-1]
@@ -342,7 +346,7 @@ def test_lounge_vote_default_follows_the_env(monkeypatch) -> None:
     from arenatalk.lounge import lounge_vote_default
 
     monkeypatch.delenv("ARENATALK_LOUNGE", raising=False)
-    assert lounge_vote_default() is True
+    assert lounge_vote_default() is False, "the poll costs too much to be opt-out"
     monkeypatch.setenv("ARENATALK_LOUNGE", "0")
     assert lounge_vote_default() is False
     monkeypatch.setenv("ARENATALK_LOUNGE", "off")
@@ -355,17 +359,25 @@ def test_lounge_vote_unset_defers_to_the_env(tmp_path: Path, monkeypatch) -> Non
     """GUI and CLI pass None when the user has not said; the env decides then."""
     from arenatalk.engines.debate import run_debate
 
+    def _run(db: str) -> object:
+        return run_debate(
+            "주제",
+            _lounge_roster(8),
+            MockBackend(think_seconds=0.0),
+            RankingStore(tmp_path / db),
+            rounds=1,
+            parallel=False,
+            research=False,
+        )
+
+    monkeypatch.delenv("ARENATALK_LOUNGE", raising=False)
+    assert not _run("unset.db").audience_ballots, "silence means no poll"
+
+    monkeypatch.setenv("ARENATALK_LOUNGE", "1")
+    assert _run("on.db").audience_ballots, "the env is what turns it on"
+
     monkeypatch.setenv("ARENATALK_LOUNGE", "0")
-    result = run_debate(
-        "주제",
-        _lounge_roster(8),
-        MockBackend(think_seconds=0.0),
-        RankingStore(tmp_path / "env.db"),
-        rounds=1,
-        parallel=False,
-        research=False,
-    )
-    assert not result.audience_ballots
+    assert not _run("off.db").audience_ballots
 
 
 def test_cancel_during_lounge_prefetch_is_a_cancel(tmp_path: Path) -> None:
@@ -390,6 +402,7 @@ def test_cancel_during_lounge_prefetch_is_a_cancel(tmp_path: Path) -> None:
             research=False,
             lounge_prefetch=True,
             should_cancel=should_cancel,
+            lounge_vote=True,
         )
 
 
@@ -418,6 +431,7 @@ def test_a_broken_audience_does_not_lose_the_debate(tmp_path: Path) -> None:
             research=False,
             lounge_prefetch=True,
             on_event=events.append,
+            lounge_vote=True,
         )
     finally:
         debate_mod._run_jobs = original
@@ -461,6 +475,7 @@ def test_every_lounge_member_gets_a_ballot(tmp_path: Path) -> None:
         parallel=False,
         research=False,
         lounge_prefetch=True,
+        lounge_vote=True,
     )
     assert len(result.audience_ballots) == len(roster) - len(result.participants)
 
@@ -541,7 +556,7 @@ def test_lounge_switch_is_remembered_across_restarts(tmp_path: Path, monkeypatch
     settings.clear()
     settings.sync()
 
-    assert win.stored_lounge_vote() is True, "first run polls"
+    assert win.stored_lounge_vote() is False, "first run stays quiet"
 
     settings.setValue(win.LOUNGE_VOTE_KEY, False)
     settings.sync()

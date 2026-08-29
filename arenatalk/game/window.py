@@ -81,14 +81,16 @@ def _stored_bool(settings: QSettings, key: str) -> bool | None:
 def stored_lounge_vote() -> bool:
     """The switch position the next debate starts from.
 
-    An env var set for this launch outranks the remembered position — it is the
-    more recent instruction, and it is how a headless or scripted run says no.
+    Off until the user turns it on, because the poll is the run's biggest token
+    cost. An env var set for this launch outranks the remembered position — it
+    is the more recent instruction, and it is how a headless or scripted run
+    says yes or no.
     """
     env = lounge_vote_env()
     if env is not None:
         return env
     stored = _stored_bool(app_settings(), LOUNGE_VOTE_KEY)
-    return True if stored is None else stored
+    return False if stored is None else stored
 
 
 STYLE = """

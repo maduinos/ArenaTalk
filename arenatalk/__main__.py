@@ -354,10 +354,17 @@ def main(argv: list[str] | None = None) -> int:
         help="캐릭 발언을 한 명씩 직렬 실행",
     )
     p_debate.add_argument(
+        "--lounge",
+        action="store_true",
+        help="대기실 여론 조사를 켭니다. 출전자 외 전원이 CLI를 한 번씩 부르므로 "
+        "한 판에서 토큰을 가장 많이 쓰는 단계라 기본값은 꺼짐입니다. "
+        "ARENATALK_LOUNGE=1 로도 켤 수 있습니다",
+    )
+    p_debate.add_argument(
         "--no-lounge",
         action="store_true",
-        help="대기실 여론 조사 생략 (출전자 외 전원이 CLI를 한 번씩 부르므로 "
-        "토큰을 아끼려면 끄세요). 기본값은 ARENATALK_LOUNGE=0 으로도 바꿀 수 있습니다",
+        help="대기실 여론 조사를 끕니다 (기본값). ARENATALK_LOUNGE=1 로 켜 둔 "
+        "환경에서 이 판만 되돌릴 때 쓰세요",
     )
     p_debate.add_argument("--characters", type=Path, default=None)
     p_debate.add_argument(
@@ -623,7 +630,11 @@ def main(argv: list[str] | None = None) -> int:
             rounds=args.rounds,
             parallel=not args.no_parallel,
             research=True,
-            lounge_vote=False if args.no_lounge else None,
+            # Both flags given is a contradiction; the explicit "off" wins,
+            # so a scripted --no-lounge can never be talked into spending.
+            lounge_vote=(
+                False if args.no_lounge else (True if args.lounge else None)
+            ),
             on_event=lambda m: console.print(f"[dim]{m}[/dim]"),
         )
 

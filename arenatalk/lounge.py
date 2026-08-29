@@ -34,13 +34,14 @@ def lounge_vote_env() -> bool | None:
 def lounge_vote_default() -> bool:
     """Whether the waiting room polls unless a caller says otherwise.
 
-    The poll asks every character who is not on stage, so on a large roster it
-    is the single biggest consumer of CLI tokens in a run. ``ARENATALK_LOUNGE``
-    turns it off for a whole machine; the GUI switch and ``--no-lounge`` turn
-    it off for one debate.
+    Off. The poll asks every character who is not on stage, so on a large
+    roster it is the single biggest consumer of CLI tokens in a run — too
+    expensive to charge anyone who never asked for it. ``ARENATALK_LOUNGE=1``
+    turns it on for a whole machine; the GUI switch and ``--lounge`` turn it on
+    for one debate.
     """
     env = lounge_vote_env()
-    return True if env is None else env
+    return False if env is None else env
 
 
 LEARN_RATE = 0.08

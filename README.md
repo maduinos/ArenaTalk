@@ -39,22 +39,24 @@ arenatalk debate '주식 비중을 늘려야 하나' --domain '주식·투자·�
 
 ## 대기실 여론 조사 (토큰)
 
-출전하지 않은 캐릭터 전원이 본선과 동시에 한 번씩 투표합니다. 21명 로스터면
-CLI 호출 18번이 본선 위에 얹히므로, 한 판에서 토큰을 가장 많이 쓰는 단계입니다.
+**기본값은 꺼짐입니다.** 켜면 출전하지 않은 캐릭터 전원이 본선과 동시에 한 번씩
+투표합니다. 21명 로스터면 CLI 호출 18번이 본선 위에 얹히므로, 한 판에서 토큰을
+가장 많이 쓰는 단계입니다.
 
-GUI 툴바의 **「여론 · 켜기/끄기」** 로 끌 수 있고, 끄면 본선 발언만 진행합니다.
-승패·Elo는 원래 본선 발언으로만 정해지므로 결과 자체는 그대로이고, 화면의 여론
-칩과 `Lounge opinion` 집계만 빠집니다.
+GUI 툴바의 **「여론 · 켜기/끄기」** 로 켤 수 있습니다. 꺼진 상태에서는 본선 발언만
+진행합니다. 승패·Elo는 원래 본선 발언으로만 정해지므로 결과 자체는 켜든 끄든
+같고, 화면의 여론 칩과 `Lounge opinion` 집계만 달라집니다.
 
 선택은 저장돼서 다음 실행에도 유지됩니다 (`~/.config/maduinos/ArenaTalk.ini`,
 Windows는 `%APPDATA%\maduinos\ArenaTalk.ini`).
 
 ```bash
-arenatalk debate '주제' --no-lounge   # 이 판만 끄기
-export ARENATALK_LOUNGE=0             # 이 실행에서는 저장값보다 우선 (끔)
+arenatalk debate '주제' --lounge      # 이 판만 켜기
+arenatalk debate '주제' --no-lounge   # 이 판만 끄기 (기본값이라 대개 불필요)
+export ARENATALK_LOUNGE=1             # 이 실행에서는 저장값보다 우선 (켬)
 ```
 
-우선순위: `--no-lounge` → `ARENATALK_LOUNGE` → GUI에 저장된 선택 → 켬.
+우선순위: `--no-lounge` → `--lounge` → `ARENATALK_LOUNGE` → GUI에 저장된 선택 → 끔.
 
 ## 에이전트 CLI (필수)
 
