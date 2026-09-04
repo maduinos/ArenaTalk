@@ -1,3 +1,7 @@
+> 만든 사람: maduinos<br>
+> 문서 만든 날짜: 2026-08-27<br>
+> https://maduinos.blogspot.com/
+
 # 에이전트 CLI 설치와 로그인
 
 ArenaTalk은 자체 모델을 갖고 있지 않다. 이미 깔려 있는 **에이전트 CLI**를

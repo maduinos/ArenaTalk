@@ -1,3 +1,7 @@
+> 만든 사람: maduinos<br>
+> 문서 만든 날짜: 2026-08-26<br>
+> https://maduinos.blogspot.com/
+
 # Ubuntu 패키징과 배포
 
 ArenaTalk의 공식 배포·검증 대상은 Ubuntu Desktop 22.04/24.04 LTS amd64이다.
