@@ -43,6 +43,7 @@ jobs:
             dist/ubuntu/*.deb
             dist/ubuntu/SHA256SUMS
           if-no-files-found: error
+          retention-days: 1
 
   windows:
     name: exe (windows-latest)
@@ -104,3 +105,4 @@ jobs:
             dist/arenatalk-*-win64.exe
             dist/SHA256SUMS.txt
           if-no-files-found: error
+          retention-days: 1
