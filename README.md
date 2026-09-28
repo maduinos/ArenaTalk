@@ -6,6 +6,9 @@
 
 CharacterPet 캐릭터가 주제를 토론하고 Elo로 순위를 매기는 데스크톱 아레나입니다.
 
+> **개발이 중단된 프로젝트입니다.** 배포판(`.deb`/`.exe`)은 더 이상 제공하지 않으며,
+> 소스는 MIT 라이선스로 공개합니다. 필요하면 아래 방법으로 직접 실행하거나 빌드하세요.
+
 ## 캐릭터 폴더 (CharacterPet · AgentPet 공유)
 
 설정은 **AgentPet 한곳**만 씁니다 (`~/.config/agentpet/state.json` → `characters.path`).
@@ -80,19 +83,7 @@ arenatalk setup           # 없으면 무료 CLI(Node.js 포함) 자동 설치
 Windows·macOS·Linux 모두 자동 설치를 지원합니다 (winget / Homebrew / npm).
 자세한 내용: [`docs/AGENTS.md`](docs/AGENTS.md)
 
-## Ubuntu `.deb` 설치
-
-일반 사용자는 PyInstaller one-folder를 담은 `.deb`를 설치합니다 (Python/venv 불필요).
-
-```bash
-sudo apt install ./arenatalk_0.0.6_amd64.deb
-arenatalk characters root --set ~/path/to/CharacterPet/characters
-arenatalk
-```
-
-자세한 내용: [`docs/UBUNTU_PACKAGING.md`](docs/UBUNTU_PACKAGING.md)
-
-### `.deb` 빌드 (22.04 amd64 권장)
+## Ubuntu `.deb` 빌드 (22.04 amd64 권장)
 
 ```bash
 python3 -m venv .venv
@@ -101,7 +92,10 @@ pip install -U pip
 pip install -e '.[gui,packaging,dev]'
 tools/build_ubuntu_deb.sh
 # → dist/ubuntu/arenatalk_0.0.6_amd64.deb
+sudo apt install ./dist/ubuntu/arenatalk_0.0.6_amd64.deb
 ```
+
+자세한 내용: [`docs/UBUNTU_PACKAGING.md`](docs/UBUNTU_PACKAGING.md)
 
 ## 소스에서 실행
 
@@ -121,3 +115,7 @@ arenatalk experts
 pip install -e '.[dev,gui]'
 pytest
 ```
+
+## 라이선스
+
+[MIT](LICENSE)
